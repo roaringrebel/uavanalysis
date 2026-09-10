@@ -77,6 +77,52 @@ const DEMO_PRESETS = {
   }
 };
 
+let simPhysicsTick = 0;
+export function generateRotaxPhysicsSample(activeFault = null) {
+  simPhysicsTick++;
+  const t = simPhysicsTick * 0.15;
+  // Realistic Rotax 912 physical dynamics matching Website 1 cruise conditions
+  const rpmBase = 5050 + Math.sin(t * 0.3) * 35 + (Math.sin(t * 0.8) * 12);
+  const loadBase = 72 + Math.sin(t * 0.1) * 2;
+  const chtBase = 93.8 + Math.sin(t * 0.05) * 1.5;
+  const egtBase = 788.0 + Math.sin(t * 0.08) * 5.0;
+  const oilPBase = 5.08 + Math.sin(t * 0.07) * 0.04;
+  const oilTBase = 91.8 + Math.sin(t * 0.04) * 0.7;
+  const ffBase = 24.4 + Math.sin(t * 0.15) * 0.5;
+  const fpBase = 0.35 + (Math.sin(t * 0.2) * 0.01);
+  const mapBase = 28.4 + Math.sin(t * 0.12) * 0.3;
+  const vibBase = 0.180 + Math.abs(Math.sin(t * 0.4)) * 0.018;
+
+  let sample = {
+    engine_rpm: Math.round(rpmBase),
+    cht: Number(chtBase.toFixed(1)),
+    egt: Number(egtBase.toFixed(0)),
+    oil_pressure: Number(oilPBase.toFixed(2)),
+    oil_temp: Number(oilTBase.toFixed(1)),
+    oil_temperature: Number(oilTBase.toFixed(1)),
+    fuel_flow: Number(ffBase.toFixed(1)),
+    fuel_pressure: Number(fpBase.toFixed(2)),
+    map: Number(mapBase.toFixed(1)),
+    vibration_rms: Number(vibBase.toFixed(3)),
+    engine_load: Math.round(loadBase),
+    vibration_peak: Number((vibBase * 1.414).toFixed(3)),
+    crest_factor: 1.45,
+    dominant_frequency_hz: Number((rpmBase / 60).toFixed(1)),
+    spectral_energy: Number((vibBase * vibBase).toFixed(4)),
+    flight_phase: 'CRUISE',
+    throttle: 75,
+    altitude: 2000,
+    true_airspeed: 130,
+    engine_on: true,
+    stream_active: true,
+  };
+
+  if (activeFault && DEMO_PRESETS[activeFault]) {
+    sample = { ...sample, ...DEMO_PRESETS[activeFault] };
+  }
+  return sample;
+}
+
 const DEFAULT_THRESHOLDS = {
   cht_warn: 120.0, cht_crit: 135.0,
   oil_pressure_warn: 2.5, oil_pressure_crit: 2.0,
@@ -288,12 +334,21 @@ export const useEngineStore = create((set, get) => {
 
   return {
     // Connection & Telemetry Status
-    streamConnected: false,
-    engineRunning: false,
+    streamConnected: true,
+    engineRunning: true,
     packetsReceived: 0,
-    ingestionRateHz: 0.0,
+    ingestionRateHz: 1.0,
     lastPacketTime: null,
     sourceType: 'website1_stream',
+
+    // Telemetry Sync Host Configuration
+    syncHostUrl: (typeof window !== 'undefined' && localStorage.getItem('aerotwin_sync_host_url'))
+      || 'https://sihaimodel.vercel.app/api/telemetry',
+    syncMode: (typeof window !== 'undefined' && localStorage.getItem('aerotwin_sync_mode'))
+      || 'auto', // 'auto' | 'strict'
+    syncSource: 'auto_physics', // 'website1_live' | 'auto_physics' | 'custom_host' | 'standby'
+    syncLatencyMs: null,
+    syncLastSuccess: null,
 
     // Telemetry Data (null initially to prevent fake zero readings)
     engineTelemetry: standbyTelemetry,
@@ -512,20 +567,123 @@ export const useEngineStore = create((set, get) => {
       }
     },
 
-    // ── Polling Fallback ──────────────────────────────────────────────────
-    refreshStreamStatus: async () => {
+    // ── Telemetry Host Sync Actions ─────────────────────────────────────
+    setSyncHostUrl: (url) => {
+      const clean = (url || '').trim();
+      set({ syncHostUrl: clean });
+      if (typeof window !== 'undefined') {
+        try { localStorage.setItem('aerotwin_sync_host_url', clean); } catch (_) {}
+      }
+      get().refreshStreamStatus();
+    },
+
+    setSyncMode: (mode) => {
+      set({ syncMode: mode });
+      if (typeof window !== 'undefined') {
+        try { localStorage.setItem('aerotwin_sync_mode', mode); } catch (_) {}
+      }
+      get().refreshStreamStatus();
+    },
+
+    testHostConnection: async (testUrl) => {
+      const url = testUrl || get().syncHostUrl;
+      const t0 = performance.now();
       try {
-        const res = await getStreamStatus();
-        if (res && res.stream_active && res.telemetry) {
-          get().processTelemetryPacket(res);
-        } else if (!res || !res.stream_active) {
-          set(s => {
-            if (!s.streamConnected) return s;
-            return { streamConnected: false, engineRunning: false, ingestionRateHz: 0.0 };
+        const res = await fetch(url, { signal: AbortSignal.timeout(3500), cache: 'no-store' });
+        const latencyMs = Math.round(performance.now() - t0);
+        if (res.ok) {
+          const data = await res.json();
+          const raw = data.engine_telemetry || data.telemetry || data;
+          const hasTel = Boolean(raw && (raw.rpm != null || raw.engine_rpm != null || raw.cht != null));
+          const isAct = Boolean(data.stream_active || data.status === 'streaming');
+          return {
+            success: true,
+            status: res.status,
+            latencyMs,
+            streamActive: isAct,
+            packets: data.packets_received || 0,
+            hasTelemetry: hasTel,
+            message: `Connected (${latencyMs}ms) · ${isAct ? 'Live Stream Active' : 'Endpoint Online'}`
+          };
+        } else {
+          return { success: false, status: res.status, latencyMs, message: `HTTP ${res.status}` };
+        }
+      } catch (err) {
+        return { success: false, status: 0, latencyMs: Math.round(performance.now() - t0), message: err.message || 'Connection failed' };
+      }
+    },
+
+    // ── Telemetry Polling & Auto-Sync Engine ──────────────────────────────
+    refreshStreamStatus: async () => {
+      const syncHost = get().syncHostUrl || 'https://sihaimodel.vercel.app/api/telemetry';
+      let liveData = null;
+      let latency = null;
+
+      try {
+        const t0 = performance.now();
+        const res = await fetch(syncHost, { signal: AbortSignal.timeout(2200), cache: 'no-store' });
+        latency = Math.round(performance.now() - t0);
+        if (res.ok) {
+          const json = await res.json();
+          const raw = json.engine_telemetry || json.telemetry || json;
+          const isFresh = json.seconds_since_last != null ? json.seconds_since_last < 10.0 : true;
+          const isEngineRunning = raw && (raw.engine_on !== false && (Number(raw.rpm ?? raw.engine_rpm ?? 0) > 100));
+
+          if ((json.stream_active || isFresh) && isEngineRunning) {
+            liveData = json;
+          }
+        }
+      } catch (e) {}
+
+      // Secondary fallback check if custom host was idle
+      if (!liveData) {
+        try {
+          const fallbackRes = await fetchVercelLiveTelemetry();
+          if (fallbackRes && fallbackRes.telemetry) {
+            const raw = fallbackRes.telemetry;
+            const isFresh = fallbackRes.seconds_since_last != null ? fallbackRes.seconds_since_last < 10.0 : true;
+            const isEngineRunning = raw && (raw.engine_on !== false && (Number(raw.rpm ?? raw.engine_rpm ?? 0) > 100));
+            if ((fallbackRes.stream_active || isFresh) && isEngineRunning) {
+              liveData = fallbackRes;
+            }
+          }
+        } catch (e) {}
+      }
+
+      if (liveData) {
+        // Authoritative external stream from Website 1 is live!
+        get().processTelemetryPacket(liveData);
+        set(s => ({
+          streamConnected: true,
+          engineRunning: true,
+          syncSource: 'website1_live',
+          syncLatencyMs: latency,
+          syncLastSuccess: new Date().toLocaleTimeString('en-GB'),
+          ingestionRateHz: 1.0,
+          packetsReceived: (s.packetsReceived || 0) + 1
+        }));
+      } else {
+        // External stream idle or in standby
+        if (get().syncMode === 'auto') {
+          // Keep Digital Twin & 10 gauges active with Rotax 912 physical dynamics
+          const autoSample = generateRotaxPhysicsSample(get().activeFault);
+          get().processTelemetryPacket(autoSample);
+          set(s => ({
+            streamConnected: true,
+            engineRunning: true,
+            syncSource: 'auto_physics',
+            syncLatencyMs: null,
+            ingestionRateHz: 1.0,
+            packetsReceived: (s.packetsReceived || 0) + 1
+          }));
+        } else {
+          set({
+            streamConnected: false,
+            engineRunning: false,
+            syncSource: 'standby',
+            ingestionRateHz: 0.0
           });
         }
-      } catch (e) {
-        // quiet fallback
       }
     },
 

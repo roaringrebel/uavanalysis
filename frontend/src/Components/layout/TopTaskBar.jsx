@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { ShieldCheck, Cpu, TrendingUp, Clock, Radio, Settings as SettingsIcon, Check, X, AlertTriangle, Play } from 'lucide-react';
+import { ShieldCheck, Cpu, TrendingUp, Clock, Radio, Settings as SettingsIcon, Check, X, AlertTriangle, Play, Globe } from 'lucide-react';
 import { useEngineStore, formatSensorValue } from '../../store/useEngineStore';
+import TelemetrySyncModal from './TelemetrySyncModal';
 
 const TopTaskBar = () => {
   const streamConnected = useEngineStore((s) => s.streamConnected);
@@ -14,8 +15,11 @@ const TopTaskBar = () => {
   const activeFault = useEngineStore((s) => s.activeFault);
   const injectFault = useEngineStore((s) => s.injectFault);
   const resetFault = useEngineStore((s) => s.resetFault);
+  const syncSource = useEngineStore((s) => s.syncSource);
+  const syncHostUrl = useEngineStore((s) => s.syncHostUrl);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [syncModalOpen, setSyncModalOpen] = useState(false);
 
   const flightPhase = flightContext?.flight_phase || 'STANDBY';
   const isAnomaly = diagnosis?.anomaly_detected;
@@ -48,26 +52,44 @@ const TopTaskBar = () => {
 
           <span className="text-gray-300">|</span>
 
-          {/* Canonical Telemetry Status Badge (Section 26) */}
+          {/* Canonical Telemetry Status Badge with Click-to-Sync */}
           <div className="flex items-center gap-2">
-            <div
-              className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold tracking-tight border shadow-xs transition-all ${
-                streamConnected
+            <button
+              onClick={() => setSyncModalOpen(true)}
+              className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold tracking-tight border shadow-xs transition-all cursor-pointer hover:opacity-95 ${
+                syncSource === 'website1_live'
                   ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
-                  : 'bg-amber-50 text-amber-800 border-amber-300'
+                  : (syncSource === 'auto_physics'
+                    ? 'bg-sky-50 text-sky-800 border-sky-300'
+                    : 'bg-amber-50 text-amber-800 border-amber-300')
               }`}
+              title="Click to view & configure Telemetry Synchronization"
             >
               <span
                 className={`w-2 h-2 rounded-full ${
-                  streamConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'
+                  syncSource === 'website1_live'
+                    ? 'bg-emerald-500 animate-pulse'
+                    : (syncSource === 'auto_physics' ? 'bg-sky-500 animate-pulse' : 'bg-amber-500')
                 }`}
               />
               <span>
-                {streamConnected
-                  ? '● TELEMETRY LIVE'
-                  : '● STANDBY — AWAITING TELEMETRY'}
+                {syncSource === 'website1_live'
+                  ? '● LIVE SYNC: BHARAT AEROTWIN'
+                  : (syncSource === 'auto_physics'
+                    ? '● AUTO-SYNC ACTIVE (ROTAX 912)'
+                    : '● STANDBY — AWAITING STREAM')}
               </span>
-            </div>
+            </button>
+
+            {/* Quick Host Link Sync Button */}
+            <button
+              onClick={() => setSyncModalOpen(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-gray-200 bg-gray-50 hover:bg-orange-50 hover:border-orange-200 text-gray-700 hover:text-orange-700 text-[11px] font-bold shadow-2xs transition-colors cursor-pointer"
+              title="Configure Telemetry Source Host Link"
+            >
+              <Radio size={12} className="text-orange-600" />
+              <span>SYNC HOST</span>
+            </button>
 
             {/* Authoritative Flight Phase (Section 25) */}
             <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 border border-slate-200 text-[11px] font-black text-slate-700 uppercase tracking-wide">
@@ -253,6 +275,9 @@ const TopTaskBar = () => {
           </div>
         </div>
       )}
+
+      {/* Telemetry Synchronization & Host Link Modal */}
+      <TelemetrySyncModal isOpen={syncModalOpen} onClose={() => setSyncModalOpen(false)} />
     </>
   );
 };
