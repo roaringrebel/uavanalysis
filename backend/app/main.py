@@ -471,9 +471,13 @@ async def process_incoming_telemetry(data: Dict[str, Any], source_type: str = "p
 async def lifespan(app: FastAPI):
     # Startup
     load_all_models()
+    global pull_task
+    stream_state["source_url"] = "https://sihaimodel.vercel.app/api/telemetry"
+    stream_state["pull_active"] = True
+    stream_state["pull_interval_s"] = 1.0
+    pull_task = asyncio.create_task(pull_worker())
     yield
     # Shutdown
-    global pull_task
     stream_state["pull_active"] = False
     if pull_task and not pull_task.done():
         pull_task.cancel()

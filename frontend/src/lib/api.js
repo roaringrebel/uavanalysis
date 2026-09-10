@@ -262,18 +262,22 @@ export async function ingestTelemetry(telemetry) {
 }
 
 export async function getStreamStatus() {
-  if (typeof window !== 'undefined' && window.location.hostname.includes('vercel.app')) {
-    return await fetchVercelLiveTelemetry();
+  const vercelData = await fetchVercelLiveTelemetry();
+  if (vercelData && (vercelData.stream_active || vercelData.telemetry)) {
+    return vercelData;
   }
   if (BACKEND_URL) {
     try {
       const res = await fetch(`${BACKEND_URL}/api/stream/status`);
-      if (res.ok) return await res.json();
+      if (res.ok) {
+        const d = await res.json();
+        if (d && (d.stream_active || d.telemetry)) return d;
+      }
     } catch (e) {
-      console.error('API call failed during fallback:', e);
+      // quiet fallback
     }
   }
-  return await fetchVercelLiveTelemetry();
+  return vercelData;
 }
 
 export async function testExternalConnection(url) {
@@ -327,6 +331,23 @@ export async function resetStream() {
 }
 
 export async function fetchVercelLiveTelemetry() {
+  // 1. Primary: Query the authoritative stream from https://sihaimodel.vercel.app/api/telemetry
+  try {
+    const upstreamRes = await fetch('https://sihaimodel.vercel.app/api/telemetry', {
+      signal: AbortSignal.timeout(2500),
+      cache: 'no-store'
+    });
+    if (upstreamRes.ok) {
+      const upData = await upstreamRes.json();
+      if (upData && (upData.stream_active || upData.telemetry)) {
+        return upData;
+      }
+    }
+  } catch (e) {
+    // quiet fallback
+  }
+
+  // 2. Fallback: Local /api/telemetry endpoint
   try {
     const res = await fetch('/api/telemetry', {
       signal: AbortSignal.timeout(2200),

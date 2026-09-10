@@ -65,13 +65,41 @@ export default async function handler(req, res) {
   if (req.method === 'GET') {
     const timeSinceLastMs = lastPacketTime ? (Date.now() - new Date(lastPacketTime).getTime()) : 999999;
     const isLive = Boolean(lastPacketTime && timeSinceLastMs < 5500);
+
+    if (isLive && latestTelemetry) {
+      return res.status(200).json({
+        status: "streaming",
+        stream_active: true,
+        packets_received: packetCount,
+        seconds_since_last: Math.round(timeSinceLastMs / 100) / 10,
+        last_packet_time: lastPacketTime,
+        telemetry: latestTelemetry
+      });
+    }
+
+    // Seamlessly proxy active stream from authoritative endpoint https://sihaimodel.vercel.app/api/telemetry
+    try {
+      const upstream = await fetch('https://sihaimodel.vercel.app/api/telemetry', {
+        headers: { 'Accept': 'application/json' },
+        cache: 'no-store'
+      });
+      if (upstream.ok) {
+        const upstreamData = await upstream.json();
+        if (upstreamData && (upstreamData.stream_active || upstreamData.telemetry)) {
+          return res.status(200).json(upstreamData);
+        }
+      }
+    } catch (e) {
+      // quiet fallback
+    }
+
     return res.status(200).json({
-      status: isLive ? "streaming" : "standby",
-      stream_active: isLive,
-      packets_received: packetCount,
-      seconds_since_last: lastPacketTime ? Math.round(timeSinceLastMs / 100) / 10 : null,
-      last_packet_time: lastPacketTime,
-      telemetry: latestTelemetry
+      status: "standby",
+      stream_active: false,
+      packets_received: 0,
+      seconds_since_last: null,
+      last_packet_time: null,
+      telemetry: null
     });
   }
 
