@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*$py.class
+node_modules/
+frontend/node_modules/
+frontend/dist/
+dist/
+.DS_Store
+Thumbs.db
+.env
+.vercel/
+
