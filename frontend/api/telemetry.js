@@ -1,5 +1,24 @@
 // Vercel Serverless Function: /api/telemetry
-// Receives live telemetry from virtualengine.vercel.app and serves it to sihaimodel.vercel.app
+// Receives live telemetry from virtualengine.vercel.app and serves it to Website 2
+import fs from 'fs';
+import path from 'path';
+
+const TMP_FILE = path.join('/tmp', 'telemetry.json');
+
+function saveToTmp(data) {
+  try {
+    fs.writeFileSync(TMP_FILE, JSON.stringify(data));
+  } catch (_) {}
+}
+
+function loadFromTmp() {
+  try {
+    if (fs.existsSync(TMP_FILE)) {
+      return JSON.parse(fs.readFileSync(TMP_FILE, 'utf8'));
+    }
+  } catch (_) {}
+  return null;
+}
 
 let latestTelemetry = null;
 let packetCount = 0;
@@ -36,8 +55,14 @@ export default async function handler(req, res) {
       packetCount++;
       lastPacketTime = new Date().toISOString();
 
+      saveToTmp({
+        telemetry: latestTelemetry,
+        packetCount,
+        lastPacketTime
+      });
+
       // Simple real-time rule health evaluation for Vercel edge
-      const rpm = latestTelemetry.rpm || 4800;
+      const rpm = latestTelemetry.rpm || latestTelemetry.engine_rpm || 4800;
       const cht = latestTelemetry.cht || 110;
       const isAnomaly = cht > 135 || rpm > 5600;
 
@@ -58,13 +83,23 @@ export default async function handler(req, res) {
     latestTelemetry = null;
     packetCount = 0;
     lastPacketTime = null;
+    saveToTmp({ telemetry: null, packetCount: 0, lastPacketTime: null });
     return res.status(200).json({ status: "reset", stream_active: false });
   }
 
   // GET: Return latest telemetry frame and stream status
   if (req.method === 'GET') {
+    if (!latestTelemetry) {
+      const cached = loadFromTmp();
+      if (cached && cached.telemetry) {
+        latestTelemetry = cached.telemetry;
+        packetCount = cached.packetCount || packetCount;
+        lastPacketTime = cached.lastPacketTime || lastPacketTime;
+      }
+    }
+
     const timeSinceLastMs = lastPacketTime ? (Date.now() - new Date(lastPacketTime).getTime()) : 999999;
-    const isLive = Boolean(lastPacketTime && timeSinceLastMs < 5500);
+    const isLive = Boolean(lastPacketTime && timeSinceLastMs < 12000);
 
     if (isLive && latestTelemetry) {
       return res.status(200).json({
@@ -96,10 +131,10 @@ export default async function handler(req, res) {
     return res.status(200).json({
       status: "standby",
       stream_active: false,
-      packets_received: 0,
-      seconds_since_last: null,
-      last_packet_time: null,
-      telemetry: null
+      packets_received: packetCount,
+      seconds_since_last: lastPacketTime ? Math.round(timeSinceLastMs / 100) / 10 : null,
+      last_packet_time: lastPacketTime,
+      telemetry: latestTelemetry
     });
   }
 

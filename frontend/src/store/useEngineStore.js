@@ -343,7 +343,7 @@ export const useEngineStore = create((set, get) => {
 
     // Telemetry Sync Host Configuration
     syncHostUrl: (typeof window !== 'undefined' && localStorage.getItem('aerotwin_sync_host_url'))
-      || 'https://sihaimodel.vercel.app/api/telemetry',
+      || (typeof window !== 'undefined' ? `${window.location.origin}/api/telemetry` : '/api/telemetry'),
     syncMode: (typeof window !== 'undefined' && localStorage.getItem('aerotwin_sync_mode'))
       || 'auto', // 'auto' | 'strict'
     syncSource: 'auto_physics', // 'website1_live' | 'auto_physics' | 'custom_host' | 'standby'
@@ -484,18 +484,22 @@ export const useEngineStore = create((set, get) => {
       }
 
       // Format diagnosis presentation
+      const isHealthy = isEngineOn && (incomingDiag.status === 'Healthy' || incomingDiag.status === 'Standby');
+      const diagStatus = isEngineOn ? (incomingDiag.status === 'Critical' ? 'Critical' : (incomingDiag.status === 'Warning' ? 'Warning' : 'Healthy')) : 'Standby';
+      const diagFaultType = isEngineOn ? (incomingDiag.fault_type === 'Standby' || !incomingDiag.fault_type ? 'NORMAL' : incomingDiag.fault_type) : 'STANDBY';
+
       const diagnosis = {
-        status: incomingDiag.status || (isEngineOn ? 'Healthy' : 'Standby'),
-        fault_type: incomingDiag.fault_type || 'NORMAL',
-        severity: incomingDiag.status === 'Critical' ? 'CRITICAL' : (incomingDiag.status === 'Warning' ? 'MEDIUM' : 'LOW'),
-        confidence: incomingDiag.confidence ?? 0.95,
+        status: diagStatus,
+        fault_type: diagFaultType,
+        severity: diagStatus === 'Critical' ? 'CRITICAL' : (diagStatus === 'Warning' ? 'MEDIUM' : 'LOW'),
+        confidence: incomingDiag.confidence ?? 0.98,
         anomaly_detected: Boolean(incomingDiag.anomaly_detected || (soh.anomalyScore > 35)),
-        anomaly_score: incomingDiag.anomaly_reconstruction_error ?? soh.anomalyScore,
+        anomaly_score: incomingDiag.anomaly_reconstruction_error ?? (soh.anomalyScore || 0),
         health_score: soh.overall,
         rul_estimate_hours: smoothedRul,
-        fault_component: incomingDiag.fault_component || 'All Systems Nominal',
-        reasoning: incomingDiag.reasoning || ['All 10 primary parameters track nominal physical equilibrium.'],
-        recommended_action: incomingDiag.recommended_action || 'Continue mission profile. All parameters nominal.'
+        fault_component: isEngineOn ? (incomingDiag.fault_component === 'Awaiting Telemetry' ? 'All Systems Nominal' : (incomingDiag.fault_component || 'All Systems Nominal')) : 'Awaiting Telemetry',
+        reasoning: isEngineOn ? (incomingDiag.reasoning?.[0]?.includes('standby') ? ['All 10 canonical primary engine channels operating within nominal physical bounds.'] : incomingDiag.reasoning) : ['Engine stream in standby.'],
+        recommended_action: isEngineOn ? (incomingDiag.recommended_action?.includes('virtualengine') ? 'Continue mission profile. All parameters nominal.' : (incomingDiag.recommended_action || 'Continue mission profile.')) : 'Start engine on Website 1.'
       };
 
       const maintRecs = buildMaintenanceRecs(diagnosis, soh, deviations);
@@ -615,39 +619,38 @@ export const useEngineStore = create((set, get) => {
 
     // ── Telemetry Polling & Auto-Sync Engine ──────────────────────────────
     refreshStreamStatus: async () => {
-      const syncHost = get().syncHostUrl || 'https://sihaimodel.vercel.app/api/telemetry';
+      const configuredHost = get().syncHostUrl;
+      const originHost = typeof window !== 'undefined' ? `${window.location.origin}/api/telemetry` : '/api/telemetry';
+      const endpointsToTry = [
+        originHost,
+        configuredHost,
+        'https://sihaimodel-beta.vercel.app/api/telemetry',
+        'https://sihaimodel.vercel.app/api/telemetry'
+      ].filter(Boolean);
+      const candidateHosts = [...new Set(endpointsToTry)];
+
       let liveData = null;
       let latency = null;
 
-      try {
-        const t0 = performance.now();
-        const res = await fetch(syncHost, { signal: AbortSignal.timeout(2200), cache: 'no-store' });
-        latency = Math.round(performance.now() - t0);
-        if (res.ok) {
-          const json = await res.json();
-          const raw = json.engine_telemetry || json.telemetry || json;
-          const isFresh = json.seconds_since_last != null ? json.seconds_since_last < 10.0 : true;
-          const isEngineRunning = raw && (raw.engine_on !== false && (Number(raw.rpm ?? raw.engine_rpm ?? 0) > 100));
-
-          if ((json.stream_active || isFresh) && isEngineRunning) {
-            liveData = json;
-          }
-        }
-      } catch (e) {}
-
-      // Secondary fallback check if custom host was idle
-      if (!liveData) {
+      for (const host of candidateHosts) {
         try {
-          const fallbackRes = await fetchVercelLiveTelemetry();
-          if (fallbackRes && fallbackRes.telemetry) {
-            const raw = fallbackRes.telemetry;
-            const isFresh = fallbackRes.seconds_since_last != null ? fallbackRes.seconds_since_last < 10.0 : true;
-            const isEngineRunning = raw && (raw.engine_on !== false && (Number(raw.rpm ?? raw.engine_rpm ?? 0) > 100));
-            if ((fallbackRes.stream_active || isFresh) && isEngineRunning) {
-              liveData = fallbackRes;
+          const t0 = performance.now();
+          const res = await fetch(host, { signal: AbortSignal.timeout(2000), cache: 'no-store' });
+          const lat = Math.round(performance.now() - t0);
+          if (res.ok) {
+            const json = await res.json();
+            const raw = json.engine_telemetry || json.telemetry || json;
+            const isFresh = json.seconds_since_last != null ? json.seconds_since_last < 12.0 : true;
+            const rpm = Number(raw?.engine_rpm ?? raw?.rpm ?? 0);
+            const isEngineRunning = raw && (raw.engine_on !== false && rpm > 100);
+
+            if ((json.stream_active || isFresh) && isEngineRunning) {
+              liveData = json;
+              latency = lat;
+              break;
             }
           }
-        } catch (e) {}
+        } catch (_) {}
       }
 
       if (liveData) {

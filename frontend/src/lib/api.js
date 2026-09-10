@@ -65,24 +65,30 @@ export function normalizeTelemetry(t) {
   const rawOilP = t.oil_pressure ?? 0;
   const oil_pressure_bar = rawOilP > 25 ? rawOilP / 100 : rawOilP;
   const oil_pressure = rawOilP > 25 ? rawOilP : rawOilP * 100;
+  const rpm = Number(t.engine_rpm ?? t.rpm ?? 0);
+  const isEngineOn = Boolean(t.engine_on ?? (rpm > 100));
+
   return {
     ...t,
     oil_pressure,
     oil_pressure_bar: Number(oil_pressure_bar.toFixed(2)),
-    rpm: t.rpm ?? 0,
-    cht: t.cht ?? 0,
-    egt: t.egt ?? 0,
-    oil_temp: t.oil_temperature ?? t.oil_temp ?? 0,
-    fuel_flow: t.fuel_flow ?? 0,
-    vibration: t.vibration ?? t.vibration_rms ?? 0,
-    engine_on: t.engine_on ?? (t.rpm > 100),
-    flight_phase: t.flight_phase || 'STANDBY'
+    rpm,
+    engine_rpm: rpm,
+    cht: Number(t.cht ?? 94),
+    egt: Number(t.egt ?? 790),
+    oil_temp: Number(t.oil_temperature ?? t.oil_temp ?? 92),
+    fuel_flow: Number(t.fuel_flow ?? 24.5),
+    vibration: Number(t.vibration ?? t.vibration_rms ?? 0.18),
+    vibration_rms: Number(t.vibration_rms ?? t.vibration ?? 0.18),
+    engine_load: Number(t.engine_load ?? t.engineLoad ?? 72),
+    engine_on: isEngineOn,
+    flight_phase: (t.flight_phase || 'CRUISE').toUpperCase()
   };
 }
 
 function classifyFault(rawT) {
   const t = normalizeTelemetry(rawT);
-  if (!t || !t.engine_on || t.rpm < 100) {
+  if (!t || (!t.engine_on && t.rpm < 100)) {
     return {
       status: 'Standby',
       fault_component: 'Awaiting Telemetry',
@@ -94,7 +100,7 @@ function classifyFault(rawT) {
 
   const overheat  = t.cht > 128 || t.egt > 870;
   const oilFault  = t.oil_pressure < 260 || t.oil_temp > 112;
-  const bearing   = t.vibration > 2.2;
+  const bearing   = t.vibration > 0.50;
   const leanFire  = (t.afr && t.afr > 16.0) || (t.fuel_flow > 0 && t.fuel_flow < 13);
 
   if (oilFault && t.oil_pressure < 220) return {
@@ -331,31 +337,24 @@ export async function resetStream() {
 }
 
 export async function fetchVercelLiveTelemetry() {
-  // 1. Primary: Query the authoritative stream from https://sihaimodel.vercel.app/api/telemetry
-  try {
-    const upstreamRes = await fetch('https://sihaimodel.vercel.app/api/telemetry', {
-      signal: AbortSignal.timeout(2500),
-      cache: 'no-store'
-    });
-    if (upstreamRes.ok) {
-      const upData = await upstreamRes.json();
-      if (upData && (upData.stream_active || upData.telemetry)) {
-        return upData;
+  const endpoints = [
+    '/api/telemetry',
+    'https://sihaimodel-beta.vercel.app/api/telemetry',
+    'https://sihaimodel.vercel.app/api/telemetry'
+  ];
+  for (const ep of endpoints) {
+    try {
+      const res = await fetch(ep, {
+        signal: AbortSignal.timeout(2000),
+        cache: 'no-store'
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data && (data.stream_active || data.telemetry)) {
+          return data;
+        }
       }
-    }
-  } catch (e) {
-    // quiet fallback
-  }
-
-  // 2. Fallback: Local /api/telemetry endpoint
-  try {
-    const res = await fetch('/api/telemetry', {
-      signal: AbortSignal.timeout(2200),
-      cache: 'no-store'
-    });
-    if (res.ok) return await res.json();
-  } catch (e) {
-    // ignore
+    } catch (_) {}
   }
   return null;
 }

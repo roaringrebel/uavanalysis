@@ -1,5 +1,24 @@
 {
-  "rewrites": [
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
+  "routes": [
+    {
+      "src": "/api/telemetry",
+      "dest": "/api/telemetry.js"
+    },
+    {
+      "src": "/api",
+      "dest": "/api/telemetry.js"
+    },
+    {
+      "src": "/",
+      "methods": ["POST"],
+      "dest": "/api/telemetry.js"
+    },
+    {
+      "handle": "filesystem"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/index.html"
+    }
   ]
 }
