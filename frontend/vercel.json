@@ -2,16 +2,21 @@
   "routes": [
     {
       "src": "/api/telemetry",
-      "dest": "/api/telemetry.js"
+      "dest": "/api/telemetry"
     },
     {
       "src": "/api",
-      "dest": "/api/telemetry.js"
+      "dest": "/api/telemetry"
     },
     {
       "src": "/",
       "methods": ["POST"],
-      "dest": "/api/telemetry.js"
+      "dest": "/api/telemetry"
+    },
+    {
+      "src": "/index.html",
+      "methods": ["POST"],
+      "dest": "/api/telemetry"
     },
     {
       "handle": "filesystem"
