@@ -1,0 +1,12 @@
+backend/
+render.yaml
+Aerospace_RUL_Dataset.csv
+Aerospace_RUL_Synthetic_Data.xlsx
+anomaly_test.csv
+vibration_features_dataset.csv
+files-2/
+*.bat
+*.md
+.git
+frontend/node_modules
+node_modules
