@@ -22,10 +22,10 @@ const NAV = [
 ];
 
 const Sidebar = () => {
-  const alerts = useEngineStore(s => s.alerts);
+  const alerts = useEngineStore(s => s.alerts) || [];
   const syncState = useEngineStore(s => s.syncState);
   const isSynchronized = syncState === 'SYNCHRONIZED';
-  const activeAlertsCount = alerts.filter(a => a.sev === 'critical' || a.sev === 'warning').length || 0;
+  const activeAlertsCount = Array.isArray(alerts) ? alerts.filter(a => a?.sev === 'critical' || a?.sev === 'warning').length : 0;
 
   return (
     <nav

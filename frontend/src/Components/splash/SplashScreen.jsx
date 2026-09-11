@@ -801,10 +801,23 @@ export default function SplashScreen({ onComplete }) {
       rafRef.current = requestAnimationFrame(animate);
     };
 
+    const fallbackTimer = setTimeout(() => {
+      if (onComplete) onComplete();
+    }, TOTAL + 300);
+
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape' || e.key === ' ' || e.key === 'Enter') {
+        if (onComplete) onComplete();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+
     rafRef.current = requestAnimationFrame(animate);
     return () => {
+      clearTimeout(fallbackTimer);
       cancelAnimationFrame(rafRef.current);
       window.removeEventListener('resize', onResize);
+      window.removeEventListener('keydown', onKeyDown);
     };
   }, [initCanvas, onComplete]);
 
@@ -824,6 +837,33 @@ export default function SplashScreen({ onComplete }) {
       overflow: 'hidden', userSelect: 'none',
     }}>
       <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, display: 'block' }} />
+
+      {/* Skip button for quick operator access */}
+      <button
+        type="button"
+        onClick={() => onComplete && onComplete()}
+        style={{
+          position: 'absolute',
+          top: 16,
+          right: 20,
+          zIndex: 10000,
+          background: 'rgba(241, 245, 249, 0.85)',
+          backdropFilter: 'blur(8px)',
+          border: '1px solid #CBD5E1',
+          borderRadius: 8,
+          padding: '6px 14px',
+          fontSize: 11,
+          fontWeight: 700,
+          letterSpacing: '0.08em',
+          color: '#475569',
+          cursor: 'pointer',
+          textTransform: 'uppercase',
+          boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+          transition: 'all 0.2s ease',
+        }}
+      >
+        Skip Intro ✕
+      </button>
 
       {/* Typography overlays — React-managed for crisp rendering */}
       <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>

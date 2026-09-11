@@ -456,7 +456,9 @@ export const useEngineStore = create((set, get) => {
     receivedTelemetry: null,
     engineTelemetry: null, // References receivedTelemetry
     telemetry: {}, // Backwards-compatible map
+    alerts: [], // Current active system alerts
     lastValidTelemetry: null, // Frozen snapshot when connection becomes STALE or LOST (Requirement 14)
+    lastKnownTelemetry: null, // Alias to lastValidTelemetry for components
     lastKnownTimestamp: null,
 
     // Telemetry Sync Host Configuration
@@ -526,6 +528,16 @@ export const useEngineStore = create((set, get) => {
       } else {
         get().setDemoMode(false);
       }
+    },
+
+    isSensorAvailable: (param) => {
+      if (typeof param === 'string') {
+        const s = get();
+        if (!s.telemetryReady || s.telemetryStatus !== 'LIVE') return false;
+        const val = s.engineTelemetry?.[param] ?? s.telemetry?.[param];
+        return val !== null && val !== undefined && !isNaN(val) && val !== '' && val !== '—';
+      }
+      return param !== null && param !== undefined && !isNaN(param) && param !== '' && param !== '—';
     },
 
     // ── Ingest Valid Packet from Virtual Engine (Strict Telemetry Gate) ─────
@@ -716,6 +728,7 @@ export const useEngineStore = create((set, get) => {
         receivedTelemetry: validated,
         engineTelemetry: validated,
         lastValidTelemetry: { ...validated },
+        lastKnownTelemetry: { ...validated },
         lastKnownTimestamp: nowTimeStr,
         telemetryWindow: newWindow,
         windowSamples,
@@ -760,6 +773,7 @@ export const useEngineStore = create((set, get) => {
         engineRunning: false,
         isStale: false,
         lastValidTelemetry: lastKnown,
+        lastKnownTelemetry: lastKnown,
         lastKnownTimestamp: lastTimestamp,
         receivedTelemetry: null,
         engineTelemetry: null,
@@ -806,6 +820,7 @@ export const useEngineStore = create((set, get) => {
             isSynchronized: false,
             isStale: true,
             lastValidTelemetry: lastKnown,
+            lastKnownTelemetry: lastKnown,
             receivedTelemetry: null,
             engineTelemetry: null,
             telemetry: {},

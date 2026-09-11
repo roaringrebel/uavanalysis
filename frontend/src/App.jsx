@@ -5,6 +5,7 @@ import Sidebar      from './Components/layout/Sidebar';
 import TopTaskBar   from './Components/layout/TopTaskBar';
 import AppRouter    from './router';
 import SplashScreen from './Components/splash/SplashScreen';
+import ErrorBoundary from './Components/common/ErrorBoundary';
 
 const Layout = () => {
   const connectWebSocket   = useEngineStore(s => s.connectWebSocket);
@@ -24,7 +25,11 @@ const Layout = () => {
       <div className="h-full shrink-0 z-30"><Sidebar /></div>
       <main className="flex-1 flex flex-col overflow-hidden min-w-0">
         <TopTaskBar />
-        <div className="flex-1 overflow-y-auto"><AppRouter /></div>
+        <div className="flex-1 overflow-y-auto">
+          <ErrorBoundary>
+            <AppRouter />
+          </ErrorBoundary>
+        </div>
       </main>
     </div>
   );
@@ -42,7 +47,9 @@ const App = () => {
         transition: 'opacity 0.6s ease',
         pointerEvents: splashDone ? 'auto' : 'none',
       }}>
-        <Layout />
+        <ErrorBoundary>
+          <Layout />
+        </ErrorBoundary>
       </div>
     </BrowserRouter>
   );

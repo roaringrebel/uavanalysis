@@ -21,7 +21,7 @@ const Dashboard = () => {
   const digitalTwinDeviations = useEngineStore((s) => s.digitalTwinDeviations);
   const finalDecision = useEngineStore((s) => s.finalDecision);
   const lastPacketTime = useEngineStore((s) => s.lastPacketTime);
-  const lastKnownTelemetry = useEngineStore((s) => s.lastKnownTelemetry);
+  const lastKnownTelemetry = useEngineStore((s) => s.lastKnownTelemetry || s.lastValidTelemetry);
   const lastKnownTimestamp = useEngineStore((s) => s.lastKnownTimestamp);
   const isStale = useEngineStore((s) => s.isStale);
   const windowSamples = useEngineStore((s) => s.windowSamples);
@@ -380,7 +380,7 @@ const Dashboard = () => {
       </div>
 
       {/* ── Separate Section: Last Known Telemetry (Requirement 6) ── */}
-      {(!hasLiveTelemetry && lastKnownTelemetry !== null) && (
+      {(!hasLiveTelemetry && Boolean(lastKnownTelemetry)) && (
         <div className="bg-white rounded-2xl p-5 px-6 border border-slate-200 shadow-xs">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
@@ -398,7 +398,7 @@ const Dashboard = () => {
               <div key={s.id} className="p-2.5 rounded-xl bg-slate-50 border border-slate-100">
                 <span className="text-[10px] font-bold text-slate-400 uppercase block">{s.label}</span>
                 <span className="font-mono font-bold text-slate-700 text-sm">
-                  {formatSensorValue(lastKnownTelemetry[s.id], s.decimals)} {s.unit}
+                  {formatSensorValue(lastKnownTelemetry?.[s.id], s.decimals)} {s.unit}
                 </span>
               </div>
             ))}
