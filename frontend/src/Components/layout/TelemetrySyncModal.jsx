@@ -3,9 +3,9 @@ import { Radio, Wifi, Globe, Check, X, AlertCircle, RefreshCw, ExternalLink, Act
 import { useEngineStore } from '../../store/useEngineStore';
 
 const PRESETS = [
-  { label: 'Website 1 Vercel Stream (Default)', url: 'https://sihaimodel.vercel.app/api/telemetry' },
-  { label: 'Website 2 Edge (sihaimodel-beta)', url: 'https://sihaimodel-beta.vercel.app/api/telemetry' },
-  { label: 'Local Python Backend (Port 3000)', url: 'http://localhost:3000/api/stream/status' },
+  { label: 'Virtual Engine Cloud Relay (virtualengine.vercel.app)', url: 'https://sihaimodel.vercel.app/api/telemetry' },
+  { label: 'Local Ingest Relay (/api/telemetry)', url: '/api/telemetry' },
+  { label: 'Local Backend Relay (Port 3000)', url: 'http://localhost:3000/api/telemetry' },
 ];
 
 const TelemetrySyncModal = ({ isOpen, onClose }) => {

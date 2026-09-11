@@ -461,9 +461,9 @@ export const useEngineStore = create((set, get) => {
     lastKnownTelemetry: null, // Alias to lastValidTelemetry for components
     lastKnownTimestamp: null,
 
-    // Telemetry Sync Host Configuration
+    // Telemetry Sync Host Configuration (Default to Virtual Engine Cloud Relay)
     syncHostUrl: (typeof window !== 'undefined' && localStorage.getItem('aerotwin_sync_host_url'))
-      || (typeof window !== 'undefined' ? `${window.location.origin}/api/telemetry` : '/api/telemetry'),
+      || 'https://sihaimodel.vercel.app/api/telemetry',
     syncMode: 'strict',
     syncSource: 'standby', // 'website1_live' | 'demo_simulation' | 'standby'
     syncLatencyMs: null,
@@ -1000,10 +1000,15 @@ export const useEngineStore = create((set, get) => {
         return;
       }
 
-      // Virtual Engine Mode: Poll authoritative local endpoint or user-configured sync host
+      // Virtual Engine Mode: Poll authoritative cloud relay from virtualengine.vercel.app or local relay
       const configuredHost = get().syncHostUrl;
       const originHost = typeof window !== 'undefined' ? `${window.location.origin}/api/telemetry` : '/api/telemetry';
-      const endpointsToTry = [originHost, configuredHost].filter(Boolean);
+      const endpointsToTry = [
+        configuredHost,
+        'https://sihaimodel.vercel.app/api/telemetry',
+        originHost,
+        '/api/telemetry'
+      ].filter(Boolean);
       const candidateHosts = [...new Set(endpointsToTry)];
 
       let liveData = null;
@@ -1012,14 +1017,14 @@ export const useEngineStore = create((set, get) => {
       for (const host of candidateHosts) {
         try {
           const t0 = performance.now();
-          const res = await fetch(host, { signal: AbortSignal.timeout(2000), cache: 'no-store' });
+          const res = await fetch(host, { signal: AbortSignal.timeout(2500), cache: 'no-store' });
           const lat = Math.round(performance.now() - t0);
           if (res.ok) {
             const json = await res.json();
             const raw = json.engine_telemetry || json.telemetry;
-            const isFresh = json.seconds_since_last == null || json.seconds_since_last < 5.0;
+            const isFresh = json.seconds_since_last == null || json.seconds_since_last < 8.0;
 
-            if (json.stream_active && isFresh && raw) {
+            if ((json.stream_active || isFresh) && raw && (raw.rpm != null || raw.engine_rpm != null || raw.cht != null)) {
               liveData = raw;
               latency = lat;
               break;
