@@ -7,8 +7,9 @@ import {
 import { useEngineStore, formatSensorValue } from '../store/useEngineStore';
 
 const MissionControl = () => {
-  const streamConnected = useEngineStore((s) => s.streamConnected);
-  const engineTelemetry = useEngineStore((s) => s.engineTelemetry);
+  const isSynchronized = useEngineStore((s) => s.isSynchronized);
+  const syncState = useEngineStore((s) => s.syncState);
+  const modelReady = useEngineStore((s) => s.modelReady);
   const flightContext = useEngineStore((s) => s.flightContext);
   const diagnosis = useEngineStore((s) => s.diagnosis);
   const soh = useEngineStore((s) => s.soh);
@@ -22,16 +23,16 @@ const MissionControl = () => {
   const elpSelected = useEngineStore((s) => s.elpSelected);
   const triggerEmergencyRecovery = useEngineStore((s) => s.triggerEmergencyRecovery);
 
-  const hasStream = streamConnected && engineTelemetry !== null;
-  const flightPhase = (flightContext?.flight_phase || 'STANDBY').toUpperCase();
-  const isAirborne = ['TAKEOFF', 'CLIMB', 'CRUISE', 'DESCENT', 'APPROACH'].includes(flightPhase);
+  const isReady = isSynchronized && modelReady;
+  const flightPhase = isSynchronized ? (flightContext?.flight_phase || 'STANDBY').toUpperCase() : '—';
+  const isAirborne = isSynchronized && ['TAKEOFF', 'CLIMB', 'CRUISE', 'DESCENT', 'APPROACH'].includes(flightPhase);
 
   // Mission Demand calculation in both minutes & hours (Section 21)
-  const demandMinutes = Math.round(missionDemandHours * 60);
+  const demandMinutes = isReady ? Math.round(missionDemandHours * 60) : null;
 
   // Deterministic Mission Reliability Calculation (Section 22 - NO Math.random()!)
-  let missionReliability = 'READY';
-  if (hasStream) {
+  let missionReliability = '—';
+  if (isReady) {
     if (flightPhase === 'STANDBY') {
       missionReliability = 'READY (100%)';
     } else {
@@ -45,9 +46,11 @@ const MissionControl = () => {
   }
 
   // Mission Risk Category
-  const missionRisk = diagnosis?.status === 'Critical' || (rulMarginHours !== null && rulMarginHours <= 0)
+  const missionRisk = !isReady
+    ? '—'
+    : (diagnosis?.status === 'Critical' || (rulMarginHours !== null && rulMarginHours <= 0)
     ? 'HIGH RISK'
-    : (diagnosis?.status === 'Warning' || (soh?.overall !== null && soh?.overall < 75) ? 'MODERATE' : 'LOW RISK');
+    : (diagnosis?.status === 'Warning' || (soh?.overall !== null && soh?.overall < 75) ? 'MODERATE' : 'LOW RISK'));
 
   return (
     <div className="flex-1 flex flex-col h-full bg-[#F8FAFC] text-gray-800 select-none overflow-y-auto p-4 lg:p-7 max-w-[1780px] mx-auto w-full gap-6 font-sans">
@@ -68,13 +71,13 @@ const MissionControl = () => {
           </div>
         </div>
 
-        {/* Flight Phase from Website 1 (Section 25) */}
+        {/* Flight Phase & Sync Status */}
         <div className="flex items-center gap-2.5">
           <div className="px-3.5 py-1.5 rounded-xl bg-slate-100 border border-slate-200 text-xs font-bold text-slate-700">
-            WEBSITE 1 FLIGHT PHASE: <span className="text-orange-600 font-black">{flightPhase}</span>
+            FLIGHT PHASE: <span className="text-orange-600 font-black">{flightPhase}</span>
           </div>
-          <div className="px-3 py-1.5 rounded-xl bg-slate-100 border border-slate-200 text-xs font-bold text-slate-700">
-            ALTITUDE: <span className="text-gray-900 font-black">{flightContext?.altitude ?? 2500} m</span>
+          <div className="px-3.5 py-1.5 rounded-xl bg-slate-100 border border-slate-200 text-xs font-bold text-slate-700">
+            ALTITUDE: <span className="text-gray-900 font-black">{isSynchronized ? `${flightContext?.altitude ?? 2500} m` : '—'}</span>
           </div>
         </div>
       </div>
@@ -138,18 +141,24 @@ const MissionControl = () => {
           </span>
           <div className="my-3">
             <span className={`text-4xl font-black tracking-tight block uppercase ${
-              finalDecision === 'GO' ? 'text-emerald-600' : (finalDecision === 'CAUTION' ? 'text-amber-600' : 'text-red-600')
+              !isReady
+                ? 'text-gray-400 opacity-60'
+                : (finalDecision === 'GO' ? 'text-emerald-600' : (finalDecision === 'CAUTION' ? 'text-amber-600' : 'text-red-600'))
             }`}>
-              {finalDecision}
+              {isReady ? finalDecision : '—'}
             </span>
             <p className="text-xs text-gray-500 mt-1">
-              Multi-criteria dispatch rule based on health, SOH, RUL margin, and anomaly.
+              {isReady
+                ? 'Multi-criteria dispatch rule based on health, SOH, RUL margin, and anomaly.'
+                : 'Virtual Engine not synchronized or awaiting 32-sample window.'}
             </p>
           </div>
           <div className="pt-3 border-t border-gray-100 text-xs flex justify-between items-center text-gray-500">
             <span>Mission Risk Category:</span>
             <span className={`font-bold ${
-              missionRisk === 'LOW RISK' ? 'text-emerald-700' : (missionRisk === 'MODERATE' ? 'text-amber-700' : 'text-red-700')
+              !isReady
+                ? 'text-gray-400'
+                : (missionRisk === 'LOW RISK' ? 'text-emerald-700' : (missionRisk === 'MODERATE' ? 'text-amber-700' : 'text-red-700'))
             }`}>
               {missionRisk}
             </span>
@@ -163,11 +172,11 @@ const MissionControl = () => {
           </span>
           <div className="my-3">
             <div className="flex items-baseline gap-1">
-              <span className="text-3xl font-black text-gray-900 font-mono tracking-tight">
-                {formatSensorValue(missionDemandHours, 2)}
+              <span className={`text-3xl font-black font-mono tracking-tight ${isReady ? 'text-gray-900' : 'text-gray-400 opacity-60'}`}>
+                {isReady ? formatSensorValue(missionDemandHours, 2) : '—'}
               </span>
-              <span className="text-sm font-bold text-gray-400">hours</span>
-              <span className="text-xs text-gray-500 ml-1">({demandMinutes} min)</span>
+              {isReady && <span className="text-sm font-bold text-gray-400">hours</span>}
+              {isReady && demandMinutes != null && <span className="text-xs text-gray-500 ml-1">({demandMinutes} min)</span>}
             </div>
             <p className="text-xs text-gray-500 mt-1">
               Calculated mission profile operational endurance requirement.
@@ -175,7 +184,9 @@ const MissionControl = () => {
           </div>
           <div className="pt-3 border-t border-gray-100 text-xs flex justify-between items-center text-gray-500">
             <span>Engine Target Speed:</span>
-            <span className="font-mono font-bold text-gray-800">5100 RPM (Cruise)</span>
+            <span className={`font-mono font-bold ${isReady ? 'text-gray-800' : 'text-gray-400'}`}>
+              {isReady ? '5100 RPM (Cruise)' : '—'}
+            </span>
           </div>
         </div>
 
@@ -186,10 +197,10 @@ const MissionControl = () => {
           </span>
           <div className="my-3">
             <div className="flex items-baseline gap-1">
-              <span className="text-3xl font-black text-purple-700 font-mono tracking-tight">
-                {rulHours !== null ? formatSensorValue(rulHours, 1) : '--'}
+              <span className={`text-3xl font-black font-mono tracking-tight ${isReady && rulHours !== null ? 'text-purple-700' : 'text-gray-400 opacity-60'}`}>
+                {isReady && rulHours !== null ? formatSensorValue(rulHours, 1) : '—'}
               </span>
-              <span className="text-sm font-bold text-purple-600">hours</span>
+              {isReady && rulHours !== null && <span className="text-sm font-bold text-purple-600">hours</span>}
             </div>
             <p className="text-xs text-gray-500 mt-1">
               Dynamic multi-horizon life prediction from Temporal Fusion Transformer.
@@ -197,8 +208,8 @@ const MissionControl = () => {
           </div>
           <div className="pt-3 border-t border-gray-100 text-xs flex justify-between items-center text-gray-500">
             <span>State of Health (SOH):</span>
-            <span className="font-mono font-bold text-blue-600">
-              {soh?.overall !== null ? `${soh.overall}%` : '--'}
+            <span className={`font-mono font-bold ${isReady && soh?.overall !== null ? 'text-blue-600' : 'text-gray-400'}`}>
+              {isReady && soh?.overall !== null ? `${soh.overall}%` : '—'}
             </span>
           </div>
         </div>
@@ -211,11 +222,13 @@ const MissionControl = () => {
           <div className="my-3">
             <div className="flex items-baseline gap-1">
               <span className={`text-3xl font-black font-mono tracking-tight ${
-                rulMarginHours && rulMarginHours > 2.0 ? 'text-emerald-600' : (rulMarginHours && rulMarginHours > 0 ? 'text-amber-600' : 'text-red-600')
+                !isReady
+                  ? 'text-gray-400 opacity-60'
+                  : (rulMarginHours && rulMarginHours > 2.0 ? 'text-emerald-600' : (rulMarginHours && rulMarginHours > 0 ? 'text-amber-600' : 'text-red-600'))
               }`}>
-                {rulMarginHours !== null ? (rulMarginHours > 0 ? `+${formatSensorValue(rulMarginHours, 2)}` : formatSensorValue(rulMarginHours, 2)) : '--'}
+                {isReady && rulMarginHours !== null ? (rulMarginHours > 0 ? `+${formatSensorValue(rulMarginHours, 2)}` : formatSensorValue(rulMarginHours, 2)) : '—'}
               </span>
-              <span className="text-sm font-bold text-gray-400">hours</span>
+              {isReady && rulMarginHours !== null && <span className="text-sm font-bold text-gray-400">hours</span>}
             </div>
             <p className="text-xs text-gray-500 mt-1">
               `RUL_hours - missionDemandHours` in identical hours unit.
@@ -223,7 +236,7 @@ const MissionControl = () => {
           </div>
           <div className="pt-3 border-t border-gray-100 text-xs flex justify-between items-center text-gray-500">
             <span>Mission Reliability:</span>
-            <span className="font-mono font-bold text-gray-800">{missionReliability}</span>
+            <span className={`font-mono font-bold ${isReady ? 'text-gray-800' : 'text-gray-400'}`}>{missionReliability}</span>
           </div>
         </div>
       </div>
@@ -241,7 +254,7 @@ const MissionControl = () => {
 
           <div className="space-y-3 text-xs">
             <div className={`p-3 rounded-xl border flex items-start gap-3 ${
-              finalDecision === 'GO' ? 'bg-emerald-50 border-emerald-200 text-emerald-950 font-bold' : 'bg-slate-50 border-slate-200 text-gray-500 opacity-60'
+              isReady && finalDecision === 'GO' ? 'bg-emerald-50 border-emerald-200 text-emerald-950 font-bold' : 'bg-slate-50 border-slate-200 text-gray-500 opacity-60'
             }`}>
               <CheckCircle2 size={16} className="text-emerald-600 shrink-0 mt-0.5" />
               <div>
@@ -253,7 +266,7 @@ const MissionControl = () => {
             </div>
 
             <div className={`p-3 rounded-xl border flex items-start gap-3 ${
-              finalDecision === 'CAUTION' ? 'bg-amber-50 border-amber-200 text-amber-950 font-bold' : 'bg-slate-50 border-slate-200 text-gray-500 opacity-60'
+              isReady && finalDecision === 'CAUTION' ? 'bg-amber-50 border-amber-200 text-amber-950 font-bold' : 'bg-slate-50 border-slate-200 text-gray-500 opacity-60'
             }`}>
               <AlertTriangle size={16} className="text-amber-600 shrink-0 mt-0.5" />
               <div>
@@ -265,7 +278,7 @@ const MissionControl = () => {
             </div>
 
             <div className={`p-3 rounded-xl border flex items-start gap-3 ${
-              finalDecision === 'NO-GO' ? 'bg-red-50 border-red-200 text-red-950 font-bold' : 'bg-slate-50 border-slate-200 text-gray-500 opacity-60'
+              isReady && finalDecision === 'NO-GO' ? 'bg-red-50 border-red-200 text-red-950 font-bold' : 'bg-slate-50 border-slate-200 text-gray-500 opacity-60'
             }`}>
               <AlertOctagon size={16} className="text-red-600 shrink-0 mt-0.5" />
               <div>

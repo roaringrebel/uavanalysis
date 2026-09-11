@@ -1,36 +1,133 @@
 import React, { useState } from 'react';
-import { ShieldCheck, Cpu, TrendingUp, Clock, Radio, Settings as SettingsIcon, Check, X, AlertTriangle, Play, Globe } from 'lucide-react';
-import { useEngineStore, formatSensorValue } from '../../store/useEngineStore';
+import { ShieldCheck, Cpu, TrendingUp, Clock, Radio, Settings as SettingsIcon, Check, X, AlertTriangle, Play, Globe, Wifi, WifiOff } from 'lucide-react';
+import { useEngineStore, formatSensorValue, isSensorAvailable } from '../../store/useEngineStore';
 import TelemetrySyncModal from './TelemetrySyncModal';
 
 const TopTaskBar = () => {
+  const syncState = useEngineStore((s) => s.syncState);
+  const dataSource = useEngineStore((s) => s.dataSource);
   const streamConnected = useEngineStore((s) => s.streamConnected);
   const engineTelemetry = useEngineStore((s) => s.engineTelemetry);
   const flightContext = useEngineStore((s) => s.flightContext);
   const diagnosis = useEngineStore((s) => s.diagnosis);
   const soh = useEngineStore((s) => s.soh);
   const rulHours = useEngineStore((s) => s.rulHours);
+  const lastPacketTime = useEngineStore((s) => s.lastPacketTime);
+  const isStale = useEngineStore((s) => s.isStale);
+  const windowSamples = useEngineStore((s) => s.windowSamples);
+  const modelReady = useEngineStore((s) => s.modelReady);
   const demoMode = useEngineStore((s) => s.demoMode);
   const setDemoMode = useEngineStore((s) => s.setDemoMode);
   const activeFault = useEngineStore((s) => s.activeFault);
   const injectFault = useEngineStore((s) => s.injectFault);
   const resetFault = useEngineStore((s) => s.resetFault);
-  const syncSource = useEngineStore((s) => s.syncSource);
-  const syncHostUrl = useEngineStore((s) => s.syncHostUrl);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [syncModalOpen, setSyncModalOpen] = useState(false);
 
-  const flightPhase = flightContext?.flight_phase || 'STANDBY';
-  const isAnomaly = diagnosis?.anomaly_detected;
-  const faultName = diagnosis?.fault_type || 'NORMAL';
-  const isCritical = diagnosis?.status === 'Critical';
+  const isSynchronized = syncState === 'SYNCHRONIZED';
+  const flightPhase = flightContext?.flight_phase || '—';
+  const isAnomaly = modelReady && diagnosis?.anomaly_detected;
+  const faultName = modelReady && diagnosis?.fault_type && diagnosis.fault_type !== '—' ? diagnosis.fault_type : '—';
+  const isCritical = modelReady && diagnosis?.status === 'Critical';
+
+  // Render authoritative status badge
+  const renderStatusBadge = () => {
+    if (dataSource === 'demo_simulation') {
+      return (
+        <button
+          onClick={() => setSyncModalOpen(true)}
+          className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black tracking-tight border bg-amber-50 text-amber-900 border-amber-300 shadow-xs cursor-pointer hover:opacity-95"
+          title="Demo Simulation Mode active - not live telemetry"
+        >
+          <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+          <span>● DEMO SIMULATION ACTIVE</span>
+        </button>
+      );
+    }
+
+    switch (syncState) {
+      case 'SYNCHRONIZED':
+        return (
+          <button
+            onClick={() => setSyncModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black tracking-tight border bg-emerald-50 text-emerald-800 border-emerald-300 shadow-xs cursor-pointer hover:opacity-95"
+            title="Authoritative Virtual Engine telemetry synchronized"
+          >
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span>● VIRTUAL ENGINE SYNCHRONIZED</span>
+          </button>
+        );
+      case 'CONNECTING':
+        return (
+          <button
+            onClick={() => setSyncModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold tracking-tight border bg-sky-50 text-sky-800 border-sky-300 shadow-xs cursor-pointer"
+          >
+            <span className="w-2 h-2 rounded-full bg-sky-500 animate-ping" />
+            <span>◌ VIRTUAL ENGINE CONNECTING...</span>
+          </button>
+        );
+      case 'RECONNECTING':
+        return (
+          <button
+            onClick={() => setSyncModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold tracking-tight border bg-amber-50 text-amber-800 border-amber-300 shadow-xs cursor-pointer"
+          >
+            <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+            <span>◌ VIRTUAL ENGINE RECONNECTING...</span>
+          </button>
+        );
+      case 'STALE':
+        return (
+          <button
+            onClick={() => setSyncModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold tracking-tight border bg-amber-50 text-amber-800 border-amber-300 shadow-xs cursor-pointer"
+          >
+            <span className="w-2 h-2 rounded-full bg-amber-500" />
+            <span>○ VIRTUAL ENGINE STALE</span>
+          </button>
+        );
+      case 'DISCONNECTED':
+        return (
+          <button
+            onClick={() => setSyncModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold tracking-tight border bg-slate-100 text-slate-600 border-slate-300 shadow-xs cursor-pointer"
+          >
+            <span className="w-2 h-2 rounded-full bg-slate-400" />
+            <span>○ VIRTUAL ENGINE CONNECTION LOST</span>
+          </button>
+        );
+      case 'ERROR':
+        return (
+          <button
+            onClick={() => setSyncModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold tracking-tight border bg-red-50 text-red-700 border-red-200 shadow-xs cursor-pointer"
+          >
+            <span className="w-2 h-2 rounded-full bg-red-500" />
+            <span>⚠ VIRTUAL ENGINE ERROR</span>
+          </button>
+        );
+      case 'OFFLINE':
+      default:
+        return (
+          <button
+            onClick={() => setSyncModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold tracking-tight border bg-slate-100 text-slate-600 border-slate-300 shadow-xs cursor-pointer"
+            title="Virtual Engine is not connected. Telemetry values will display as —"
+          >
+            <span className="w-2 h-2 rounded-full bg-slate-400" />
+            <span>○ VIRTUAL ENGINE NOT CONNECTED</span>
+          </button>
+        );
+    }
+  };
 
   return (
     <>
       <header className="bg-white border-b border-gray-200/80 px-6 py-2.5 flex items-center justify-between gap-4 shrink-0 shadow-2xs select-none font-sans z-30">
         {/* Left: Identity, Engine, & Authoritative Telemetry Status */}
-        <div className="flex items-center gap-3.5 shrink-0">
+        <div className="flex items-center gap-3 shrink-0">
           {/* DRDO Logo */}
           <div
             className="w-8 h-8 rounded-full overflow-hidden shrink-0 border-2 flex items-center justify-center bg-white shadow-xs"
@@ -52,55 +149,50 @@ const TopTaskBar = () => {
 
           <span className="text-gray-300">|</span>
 
-          {/* Canonical Telemetry Status Badge with Click-to-Sync */}
+          {/* Canonical Telemetry Status Badge with Click-to-Sync (Requirement 4) */}
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => setSyncModalOpen(true)}
-              className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold tracking-tight border shadow-xs transition-all cursor-pointer hover:opacity-95 ${
-                syncSource === 'website1_live'
-                  ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
-                  : (syncSource === 'auto_physics'
-                    ? 'bg-sky-50 text-sky-800 border-sky-300'
-                    : 'bg-amber-50 text-amber-800 border-amber-300')
-              }`}
-              title="Click to view & configure Telemetry Synchronization"
-            >
-              <span
-                className={`w-2 h-2 rounded-full ${
-                  syncSource === 'website1_live'
-                    ? 'bg-emerald-500 animate-pulse'
-                    : (syncSource === 'auto_physics' ? 'bg-sky-500 animate-pulse' : 'bg-amber-500')
-                }`}
-              />
+            {renderStatusBadge()}
+
+            {/* Last Telemetry Timestamp (Requirement 5) */}
+            <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] font-mono font-bold shadow-2xs ${
+              isStale
+                ? 'bg-amber-50 text-amber-900 border-amber-300'
+                : (lastPacketTime ? 'bg-slate-50 text-slate-700 border-slate-200' : 'bg-slate-50 text-slate-400 border-slate-200')
+            }`}>
+              <Clock size={11} className={isStale ? 'text-amber-600' : 'text-slate-400'} />
               <span>
-                {syncSource === 'website1_live'
-                  ? '● LIVE SYNC: BHARAT AEROTWIN'
-                  : (syncSource === 'auto_physics'
-                    ? '● AUTO-SYNC ACTIVE (ROTAX 912)'
-                    : '● STANDBY — AWAITING STREAM')}
+                {isStale
+                  ? `LAST TELEMETRY ${lastPacketTime} STALE`
+                  : (lastPacketTime ? `LAST TELEMETRY: ${lastPacketTime}` : 'LAST TELEMETRY: —')}
               </span>
-            </button>
+            </div>
 
-            {/* Quick Host Link Sync Button */}
-            <button
-              onClick={() => setSyncModalOpen(true)}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-gray-200 bg-gray-50 hover:bg-orange-50 hover:border-orange-200 text-gray-700 hover:text-orange-700 text-[11px] font-bold shadow-2xs transition-colors cursor-pointer"
-              title="Configure Telemetry Source Host Link"
-            >
-              <Radio size={12} className="text-orange-600" />
-              <span>SYNC HOST</span>
-            </button>
+            {/* AI Window Readiness (Requirement 8) */}
+            <div className={`flex items-center gap-1 px-2.5 py-1 rounded-lg border text-[11px] font-bold shadow-2xs ${
+              modelReady
+                ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                : (windowSamples > 0
+                  ? 'bg-sky-50 text-sky-800 border-sky-300'
+                  : 'bg-slate-50 text-slate-400 border-slate-200')
+            }`}>
+              <Cpu size={11} className={modelReady ? 'text-emerald-600' : (windowSamples > 0 ? 'text-sky-600' : 'text-slate-400')} />
+              <span>
+                {modelReady
+                  ? '● AI READY'
+                  : (windowSamples > 0 ? `AI: ${windowSamples} / 32 SAMPLES` : 'AI: WAITING')}
+              </span>
+            </div>
 
-            {/* Authoritative Flight Phase (Section 25) */}
+            {/* Authoritative Flight Phase */}
             <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 border border-slate-200 text-[11px] font-black text-slate-700 uppercase tracking-wide">
               <span className="text-[9px] text-slate-400 font-semibold">PHASE:</span>
               <span>{flightPhase}</span>
             </div>
 
-            {/* Demo Mode Badge if Active */}
+            {/* Demo Mode Badge if Active (Requirement 16) */}
             {demoMode && (
               <span className="px-2 py-0.5 rounded-md bg-orange-100 text-orange-700 border border-orange-200 text-[10px] font-black tracking-wider uppercase animate-pulse">
-                DEMO MODE ON
+                DEMO DATA · NOT LIVE TELEMETRY
               </span>
             )}
           </div>
@@ -110,22 +202,22 @@ const TopTaskBar = () => {
         <div className="flex items-center gap-3">
           {/* SOH summary */}
           <div className="flex items-center gap-2 px-3 py-1 rounded-xl border border-gray-200 bg-gray-50/80 text-xs shadow-2xs">
-            <TrendingUp size={14} className="text-blue-600" />
+            <TrendingUp size={14} className={modelReady && soh?.overall != null ? 'text-blue-600' : 'text-gray-400'} />
             <div className="flex flex-col">
               <span className="text-[9px] font-bold text-gray-400 uppercase leading-none">SOH</span>
-              <span className="text-xs font-black text-gray-900 leading-none mt-0.5">
-                {soh?.overall !== null && soh?.overall !== undefined ? `${soh.overall}%` : '--'}
+              <span className={`text-xs font-black leading-none mt-0.5 ${modelReady && soh?.overall != null ? 'text-gray-900' : 'text-gray-400'}`}>
+                {modelReady && soh?.overall != null ? `${soh.overall}%` : '—'}
               </span>
             </div>
           </div>
 
           {/* RUL summary */}
           <div className="flex items-center gap-2 px-3 py-1 rounded-xl border border-gray-200 bg-gray-50/80 text-xs shadow-2xs">
-            <Clock size={14} className="text-purple-600" />
+            <Clock size={14} className={modelReady && rulHours != null ? 'text-purple-600' : 'text-gray-400'} />
             <div className="flex flex-col">
               <span className="text-[9px] font-bold text-gray-400 uppercase leading-none">RUL</span>
-              <span className="text-xs font-black text-gray-900 leading-none mt-0.5">
-                {rulHours !== null ? `${formatSensorValue(rulHours, 1)} h` : '--'}
+              <span className={`text-xs font-black leading-none mt-0.5 ${modelReady && rulHours != null ? 'text-gray-900' : 'text-gray-400'}`}>
+                {modelReady && rulHours != null ? `${formatSensorValue(rulHours, 1)} h` : '—'}
               </span>
             </div>
           </div>
@@ -133,21 +225,23 @@ const TopTaskBar = () => {
           {/* Fault status */}
           <div
             className={`flex items-center gap-2 px-3 py-1 rounded-xl border text-xs shadow-2xs ${
-              isCritical
+              modelReady && isCritical
                 ? 'bg-red-50 border-red-200 text-red-700'
-                : (isAnomaly ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-gray-50/80 border-gray-200 text-gray-700')
+                : (modelReady && isAnomaly
+                  ? 'bg-amber-50 border-amber-200 text-amber-800'
+                  : 'bg-gray-50/80 border-gray-200 text-gray-700')
             }`}
           >
-            <Cpu size={14} className={isCritical ? 'text-red-600' : 'text-orange-600'} />
+            <Cpu size={14} className={modelReady ? (isCritical ? 'text-red-600' : 'text-orange-600') : 'text-gray-400'} />
             <div className="flex flex-col">
               <span className="text-[9px] font-bold text-gray-400 uppercase leading-none">DIAGNOSIS</span>
-              <span className="text-xs font-black leading-none mt-0.5 max-w-[130px] truncate">
+              <span className={`text-xs font-black leading-none mt-0.5 max-w-[130px] truncate ${modelReady && faultName !== '—' ? 'text-gray-900' : 'text-gray-400'}`}>
                 {faultName}
               </span>
             </div>
           </div>
 
-          {/* Settings Trigger Icon (Clean user modal, Section 33) */}
+          {/* Settings Trigger Icon */}
           <button
             onClick={() => setSettingsOpen(true)}
             className="w-8 h-8 rounded-lg flex items-center justify-center border border-gray-200 text-gray-600 hover:text-orange-600 hover:bg-orange-50 transition-colors shadow-2xs cursor-pointer"
@@ -157,6 +251,7 @@ const TopTaskBar = () => {
           </button>
         </div>
       </header>
+
 
       {/* Clean End-User Settings Modal (Section 33 & 34) */}
       {settingsOpen && (

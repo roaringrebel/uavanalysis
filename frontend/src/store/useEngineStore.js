@@ -19,11 +19,16 @@ export const SENSOR_CONFIG_10 = [
   { id: 'engine_load',   key: 'engine_load',   label: 'ENGINE LOAD',   unit: '%',    min: 0, max: 100,  nominal: 72,   decimals: 0 },
 ];
 
-// Helper to format sensor display value or return '--' when data is missing
-export const formatSensorValue = (val, decimals = 1, fallback = '--') => {
-  if (val === null || val === undefined || isNaN(val)) return fallback;
+// Helper to format sensor display value or return '—' when data is missing
+export const formatSensorValue = (val, decimals = 1, fallback = '—') => {
+  if (val === null || val === undefined || isNaN(val) || val === '') return fallback;
   return Number(val).toFixed(decimals);
 };
+
+export const isSensorAvailable = (val) => {
+  return val !== null && val !== undefined && !isNaN(val) && val !== '' && val !== '—';
+};
+
 
 // ─── Fault Presets (Used strictly when DEMO MODE = ON) ────────────────────────
 const DEMO_PRESETS = {
@@ -217,41 +222,46 @@ export function computeDigitalTwinDeviations(actual, expected) {
   return deviations;
 }
 
-// ─── Deterministic SOH & Anomaly Scoring ─────────────────────────────────────
+// ─── Deterministic SOH & Anomaly Scoring (No False Healthy) ─────────────────
 function computeSOH(t) {
   if (!t || (t.engine_rpm == null && t.rpm == null)) {
     return { overall: null, oilScore: null, thermalScore: null, vibScore: null, rpmScore: null, fuelScore: null, anomalyScore: null, degradation: null };
   }
   const rpm = Number(t.engine_rpm ?? t.rpm ?? 0);
   if (rpm < 100) {
-    return { overall: 100, oilScore: 100, thermalScore: 100, vibScore: 100, rpmScore: 100, fuelScore: 100, anomalyScore: 0, degradation: 0 };
+    // Engine at rest - do not fabricate 100% health or healthy status
+    return { overall: null, oilScore: null, thermalScore: null, vibScore: null, rpmScore: null, fuelScore: null, anomalyScore: null, degradation: null };
   }
 
-  const op = Number(t.oil_pressure ?? 4.0); // bar
-  const ot = Number(t.oil_temp ?? 92.0);    // °C
-  const cht = Number(t.cht ?? 94.0);        // °C
-  const egt = Number(t.egt ?? 790.0);       // °C
-  const vib = Number(t.vibration_rms ?? 0.18); // g
-  const ff = Number(t.fuel_flow ?? 24.5);   // L/h
-  const fp = Number(t.fuel_pressure ?? 0.35); // bar
+  const op = t.oil_pressure != null ? Number(t.oil_pressure) : null;
+  const ot = t.oil_temp != null ? Number(t.oil_temp) : null;
+  const cht = t.cht != null ? Number(t.cht) : null;
+  const egt = t.egt != null ? Number(t.egt) : null;
+  const vib = t.vibration_rms != null ? Number(t.vibration_rms) : null;
+  const ff = t.fuel_flow != null ? Number(t.fuel_flow) : null;
+  const fp = t.fuel_pressure != null ? Number(t.fuel_pressure) : null;
 
   // Subsystem health scores (100 = nominal, 0 = failure)
-  const opScore = op >= 3.5 ? 100 : (op <= 2.0 ? 15 : Math.round(15 + ((op - 2.0) / 1.5) * 85));
-  const otScore = ot <= 98 ? 100 : (ot >= 125 ? 10 : Math.round(100 - ((ot - 98) / 27) * 90));
-  const oilScore = Math.round(opScore * 0.65 + otScore * 0.35);
+  const opScore = op != null ? (op >= 3.5 ? 100 : (op <= 2.0 ? 15 : Math.round(15 + ((op - 2.0) / 1.5) * 85))) : null;
+  const otScore = ot != null ? (ot <= 98 ? 100 : (ot >= 125 ? 10 : Math.round(100 - ((ot - 98) / 27) * 90))) : null;
+  const oilScore = (opScore != null && otScore != null) ? Math.round(opScore * 0.65 + otScore * 0.35) : (opScore ?? otScore);
 
-  const chtScore = cht <= 105 ? 100 : (cht >= 140 ? 10 : Math.round(100 - ((cht - 105) / 35) * 90));
-  const egtScore = egt <= 820 ? 100 : (egt >= 920 ? 10 : Math.round(100 - ((egt - 820) / 100) * 90));
-  const thermalScore = Math.round(chtScore * 0.60 + egtScore * 0.40);
+  const chtScore = cht != null ? (cht <= 105 ? 100 : (cht >= 140 ? 10 : Math.round(100 - ((cht - 105) / 35) * 90))) : null;
+  const egtScore = egt != null ? (egt <= 820 ? 100 : (egt >= 920 ? 10 : Math.round(100 - ((egt - 820) / 100) * 90))) : null;
+  const thermalScore = (chtScore != null && egtScore != null) ? Math.round(chtScore * 0.60 + egtScore * 0.40) : (chtScore ?? egtScore);
 
-  const vibScore = vib <= 0.25 ? 100 : (vib >= 1.0 ? 10 : Math.round(100 - ((vib - 0.25) / 0.75) * 90));
-  const fpScore = (fp >= 0.28 && fp <= 0.45) ? 100 : Math.round(Math.max(15, 100 - Math.abs(fp - 0.35) * 200));
+  const vibScore = vib != null ? (vib <= 0.25 ? 100 : (vib >= 1.0 ? 10 : Math.round(100 - ((vib - 0.25) / 0.75) * 90))) : null;
+  const fpScore = fp != null ? ((fp >= 0.28 && fp <= 0.45) ? 100 : Math.round(Math.max(15, 100 - Math.abs(fp - 0.35) * 200))) : null;
   const fuelScore = fpScore;
 
   const rpmScore = (rpm >= 3500 && rpm <= 5500) ? 100 : (rpm > 5500 ? Math.max(20, 100 - (rpm - 5500) * 0.15) : 90);
 
+  if (oilScore == null || thermalScore == null || vibScore == null) {
+    return { overall: null, oilScore, thermalScore, vibScore, rpmScore, fuelScore, anomalyScore: null, degradation: null };
+  }
+
   const overall = Math.max(10, Math.min(100, Math.round(
-    oilScore * 0.25 + thermalScore * 0.25 + vibScore * 0.30 + fuelScore * 0.10 + rpmScore * 0.10
+    oilScore * 0.25 + thermalScore * 0.25 + vibScore * 0.30 + (fuelScore ?? 100) * 0.10 + rpmScore * 0.10
   )));
 
   const anomalyScore = Math.round(Math.max(0, 100 - overall));
@@ -262,33 +272,33 @@ function computeSOH(t) {
 
 // ─── Condition-Based Maintenance Recommendations ────────────────────────────
 function buildMaintenanceRecs(diag, soh, deviations) {
-  if (!soh || soh.overall === null || !diag || diag.status === 'Standby') {
+  if (!soh || soh.overall === null || !diag || diag.status === 'Standby' || diag.status === 'NOT_SYNCHRONIZED' || diag.status === 'COLLECTING_WINDOW') {
     return [];
   }
   const recs = [];
-  if (soh.vibScore < 70 || (deviations && deviations.vibration_rms?.status !== 'NORMAL')) {
+  if (soh.vibScore != null && soh.vibScore < 70) {
     recs.push({
       id: 'vib_maint',
       priority: soh.vibScore < 45 ? 'CRITICAL' : 'URGENT',
       subsystem: 'VIBRATION & PROPULSION CORE',
       title: 'Propeller Dynamic Balancing & Bearing Inspection',
-      evidence: `Vibration RMS elevated at ${formatSensorValue(deviations?.vibration_rms?.actual, 3)} g (Expected: ${formatSensorValue(deviations?.vibration_rms?.expected, 3)} g, Δ = +${formatSensorValue(deviations?.vibration_rms?.delta, 3)} g)`,
+      evidence: `Vibration RMS elevated at ${formatSensorValue(deviations?.vibration_rms?.actual, 3)} g (Expected: ${formatSensorValue(deviations?.vibration_rms?.expected, 3)} g)`,
       action: 'Check propeller blade pitch tracking, leading-edge erosion, and crankshaft main bearing clearance. Perform spectral FFT vibration analysis.',
       dueHours: soh.vibScore < 45 ? 0 : 5.0
     });
   }
-  if (soh.oilScore < 70 || (deviations && deviations.oil_pressure?.status !== 'NORMAL')) {
+  if (soh.oilScore != null && soh.oilScore < 70) {
     recs.push({
       id: 'oil_maint',
       priority: soh.oilScore < 50 ? 'CRITICAL' : 'URGENT',
       subsystem: 'LUBRICATION SYSTEM',
       title: 'Oil Pressure Relief Valve & Filter Servicing',
-      evidence: `Oil Pressure at ${formatSensorValue(deviations?.oil_pressure?.actual, 2)} bar below expected ${formatSensorValue(deviations?.oil_pressure?.expected, 2)} bar`,
+      evidence: `Oil Pressure at ${formatSensorValue(deviations?.oil_pressure?.actual, 2)} bar below expected envelope`,
       action: 'Inspect oil filter screen for ferrous particulate. Verify oil pressure sender wiring. Check oil cooler airflow ducts.',
       dueHours: soh.oilScore < 50 ? 0 : 10.0
     });
   }
-  if (soh.thermalScore < 70 || (deviations && deviations.cht?.status !== 'NORMAL')) {
+  if (soh.thermalScore != null && soh.thermalScore < 70) {
     recs.push({
       id: 'thermal_maint',
       priority: soh.thermalScore < 50 ? 'CRITICAL' : 'URGENT',
@@ -299,13 +309,13 @@ function buildMaintenanceRecs(diag, soh, deviations) {
       dueHours: soh.thermalScore < 50 ? 0 : 8.0
     });
   }
-  if (recs.length === 0) {
+  if (recs.length === 0 && soh.overall >= 80) {
     recs.push({
       id: 'routine_maint',
       priority: 'ROUTINE',
       subsystem: 'ALL SUBSYSTEMS NOMINAL',
       title: 'Routine 50-Hour Rotax Engine Inspection',
-      evidence: 'All 10 primary parameters track nominal Digital Twin operating bounds within ±5% tolerance.',
+      evidence: 'All 10 primary parameters track nominal Digital Twin operating bounds.',
       action: 'Perform standard 50-hr routine servicing (spark plug gap check, oil change, throttle cable lubrication).',
       dueHours: 42.5
     });
@@ -313,166 +323,307 @@ function buildMaintenanceRecs(diag, soh, deviations) {
   return recs;
 }
 
-// ─── Initial Standby State (No Fake Zeros) ──────────────────────────────────
-const standbyTelemetry = null; // null = AWAITING TELEMETRY (renders '--')
+// ─── Initial Standby State (Zero Dummy Values) ──────────────────────────────
 const standbyDiagnosis = {
-  status: 'Standby',
-  fault_type: 'NORMAL',
-  severity: 'LOW',
-  confidence: 1.0,
+  status: 'NOT_SYNCHRONIZED',
+  fault_type: '—',
+  severity: '—',
+  confidence: null,
   anomaly_detected: false,
-  anomaly_score: 0,
+  anomaly_score: null,
   health_score: null,
   rul_estimate_hours: null,
-  fault_component: 'Awaiting Telemetry',
-  reasoning: ['Awaiting authoritative live telemetry from Website 1 (Bharat AeroTwin).'],
-  recommended_action: 'Power on engine simulation on Website 1 to commence synchronized monitoring.'
+  fault_component: 'Waiting for Telemetry',
+  reasoning: ['Waiting for synchronized Virtual Engine telemetry.'],
+  recommended_action: 'Start Virtual Engine to commence live telemetry monitoring.'
 };
 
 export const useEngineStore = create((set, get) => {
-  let ws = null;
+  let wsInstance = null;
+  let wsReconnectTimer = null;
+  let reconnectAttempts = 0;
 
   return {
-    // Connection & Telemetry Status
-    streamConnected: true,
-    engineRunning: true,
+    // Authoritative Connection State
+    // 'INITIALIZING' | 'CONNECTING' | 'SYNCHRONIZED' | 'STALE' | 'DISCONNECTED' | 'RECONNECTING' | 'OFFLINE' | 'ERROR'
+    syncState: 'INITIALIZING',
+    dataSource: 'virtual_engine', // 'virtual_engine' | 'demo_simulation'
+    streamConnected: false,
+    engineRunning: false,
     packetsReceived: 0,
-    ingestionRateHz: 1.0,
+    ingestionRateHz: 0.0,
     lastPacketTime: null,
-    sourceType: 'website1_stream',
+    lastPacketTimeEpoch: 0,
+    isStale: false,
+
+    // Historical Last Known Values (Displayed ONLY when disconnected / stale)
+    lastKnownTelemetry: null,
+    lastKnownTimestamp: null,
 
     // Telemetry Sync Host Configuration
     syncHostUrl: (typeof window !== 'undefined' && localStorage.getItem('aerotwin_sync_host_url'))
       || (typeof window !== 'undefined' ? `${window.location.origin}/api/telemetry` : '/api/telemetry'),
-    syncMode: (typeof window !== 'undefined' && localStorage.getItem('aerotwin_sync_mode'))
-      || 'auto', // 'auto' | 'strict'
-    syncSource: 'auto_physics', // 'website1_live' | 'auto_physics' | 'custom_host' | 'standby'
+    syncMode: 'strict', // 'strict' = Never generate fake physics in live mode
+    syncSource: 'standby', // 'website1_live' | 'demo_simulation' | 'standby'
     syncLatencyMs: null,
     syncLastSuccess: null,
 
-    // Telemetry Data (null initially to prevent fake zero readings)
-    engineTelemetry: standbyTelemetry,
-    flightContext: {
-      flight_phase: 'STANDBY',
-      throttle: 0,
-      altitude: 0,
-      true_airspeed: 0,
-      ground_speed: 0,
-      heading: 0,
-      ambient_temperature: 15,
-      ambient_pressure: 1013.25,
-    },
-    // Backwards compatibility dictionary for existing UI cards
-    telemetry: {},
+    // Telemetry Data (NULL initially - NO DUMMY NUMERICAL READINGS)
+    engineTelemetry: null,
+    flightContext: null,
+    telemetry: {}, // Backwards-compatible map
 
     // Digital Twin Actual vs Expected
     physicsExpected: null,
     digitalTwinDeviations: null,
 
-    // AI Intelligence
+    // 32-Sample Time-Series Window (Requirement 8)
+    telemetryWindow: [],
+    windowSamples: 0,
+    windowRequired: 32,
+    modelReady: false,
+
+    // AI Intelligence (NULL initially - NO FAKE PREDICTIONS)
     diagnosis: standbyDiagnosis,
     soh: { overall: null, oilScore: null, thermalScore: null, vibScore: null, rpmScore: null, fuelScore: null, anomalyScore: null, degradation: null },
     rulHours: null,
+    rulMarginHours: null,
     history: [],
     alerts: [],
     maintenanceRecs: [],
     thresholds: { ...DEFAULT_THRESHOLDS },
 
-    // Mission Health & Emergency Recovery
-    missionDemandHours: 0.22, // 13.2 minutes estimated flight time = 0.22 h
-    rulMarginHours: null,
-    missionStatus: 'PRE-FLIGHT',
-    finalDecision: 'GO', // 'GO' | 'CAUTION' | 'NO-GO'
+    // Mission Health
+    missionDemandHours: 0.22,
+    missionStatus: 'STANDBY',
+    finalDecision: '—', // '—' before sync, 'GO' | 'CAUTION' | 'NO-GO' after
     criticalPersistenceSeconds: 0,
     emergencyRecoveryActive: false,
-    emergencyState: 'NOMINAL', // 'NOMINAL' | 'COUNTING_DOWN' | 'DIVERTING' | 'APPROACH' | 'LANDED'
+    emergencyState: 'STANDBY',
     elpSelected: null,
 
-    // Demo Mode (Default OFF, configurable via Settings)
+    // Demo Mode (Default OFF, strictly separated from live telemetry)
     demoMode: false,
     activeFault: null,
 
     // Settings actions
     setDemoMode: (val) => {
-      set({ demoMode: Boolean(val) });
-      if (!val) {
+      const isDemo = Boolean(val);
+      set({
+        demoMode: isDemo,
+        dataSource: isDemo ? 'demo_simulation' : 'virtual_engine',
+        syncSource: isDemo ? 'demo_simulation' : 'standby'
+      });
+      if (!isDemo) {
         get().resetFault();
+        get().handleConnectionLoss('Exited Demo Mode');
+        get().connectWebSocket();
+      } else {
+        get().injectFault('nominal');
       }
     },
 
-    // ── Ingest Packet from Website 1 Telemetry Stream ───────────────────────
-    processTelemetryPacket: (data) => {
-      const raw = data.engine_telemetry || data.telemetry || data;
-      if (!raw) return;
+    setDataSource: (source) => {
+      if (source === 'demo_simulation') {
+        get().setDemoMode(true);
+      } else {
+        get().setDemoMode(false);
+      }
+    },
 
-      const engine_rpm = Number(raw.engine_rpm ?? raw.rpm ?? 0);
-      const isEngineOn = Boolean(raw.engine_on ?? (engine_rpm > 100));
+    // ── Ingest Valid Packet from Virtual Engine ─────────────────────────────
+    processTelemetryPacket: (data, isDemo = false) => {
+      // If Demo packet but we are in live Virtual Engine mode, discard!
+      if (isDemo && get().dataSource !== 'demo_simulation') return;
+      if (!isDemo && get().dataSource === 'demo_simulation') return;
+
+      const raw = data.engine_telemetry || data.telemetry || data;
+      if (!raw || typeof raw !== 'object') return;
+
+      // Extract raw telemetry fields WITHOUT fake default values
+      const rawRpm = raw.engine_rpm ?? raw.rpm;
+      const rawCht = raw.cht;
+      const rawEgt = raw.egt;
+      const rawOilP = raw.oil_pressure;
+      const rawVib = raw.vibration_rms ?? raw.vibration;
+
+      // Packet validation: Must have at least one valid engine reading
+      const hasEngineData = rawRpm != null || rawCht != null || rawEgt != null || rawOilP != null || rawVib != null;
+      if (!hasEngineData) return;
+
+      const engine_rpm = rawRpm != null ? Number(Number(rawRpm).toFixed(0)) : null;
+      const cht = rawCht != null ? Number(Number(rawCht).toFixed(1)) : null;
+      const egt = rawEgt != null ? Number(Number(rawEgt).toFixed(0)) : null;
+      const oil_pressure = rawOilP != null
+        ? (rawOilP > 15.0 ? Number((rawOilP / 100.0).toFixed(2)) : Number(Number(rawOilP).toFixed(2)))
+        : null;
+      const oil_temp = (raw.oil_temp ?? raw.oil_temperature) != null
+        ? Number(Number(raw.oil_temp ?? raw.oil_temperature).toFixed(1))
+        : null;
+      const fuel_flow = raw.fuel_flow != null ? Number(Number(raw.fuel_flow).toFixed(1)) : null;
+      const fuel_pressure = raw.fuel_pressure != null ? Number(Number(raw.fuel_pressure).toFixed(2)) : null;
+      const map = raw.map != null ? Number(Number(raw.map).toFixed(1)) : null;
+      const vibration_rms = rawVib != null ? Number(Number(rawVib).toFixed(3)) : null;
+      const engine_load = (raw.engine_load ?? raw.engineLoad) != null
+        ? Number(Number(raw.engine_load ?? raw.engineLoad).toFixed(0))
+        : null;
+
+      const vibration_peak = raw.vibration_peak != null
+        ? Number(Number(raw.vibration_peak).toFixed(3))
+        : (vibration_rms != null ? Number((vibration_rms * 1.414).toFixed(3)) : null);
+      const crest_factor = raw.crest_factor != null ? Number(Number(raw.crest_factor).toFixed(2)) : 1.45;
+      const dominant_frequency_hz = raw.dominant_frequency_hz != null
+        ? Number(Number(raw.dominant_frequency_hz).toFixed(1))
+        : (engine_rpm != null && engine_rpm > 100 ? Number((engine_rpm / 60.0).toFixed(1)) : null);
+      const spectral_energy = raw.spectral_energy != null
+        ? Number(Number(raw.spectral_energy).toFixed(4))
+        : (vibration_rms != null ? Number((vibration_rms * vibration_rms).toFixed(4)) : null);
+
+      const isEngineOn = Boolean(raw.engine_on ?? (engine_rpm != null && engine_rpm > 100));
 
       const engineTelemetry = {
-        engine_rpm: Number(engine_rpm.toFixed(0)),
-        cht: Number((raw.cht ?? 94.0).toFixed(1)),
-        egt: Number((raw.egt ?? 790.0).toFixed(0)),
-        oil_pressure: Number((raw.oil_pressure ?? 5.1).toFixed(2)),
-        oil_temp: Number((raw.oil_temp ?? raw.oil_temperature ?? 92.0).toFixed(1)),
-        fuel_flow: Number((raw.fuel_flow ?? 24.5).toFixed(1)),
-        fuel_pressure: Number((raw.fuel_pressure ?? 0.35).toFixed(2)),
-        map: Number((raw.map ?? 28.4).toFixed(1)),
-        vibration_rms: Number((raw.vibration_rms ?? raw.vibration ?? 0.180).toFixed(3)),
-        engine_load: Number((raw.engine_load ?? raw.engineLoad ?? 72.0).toFixed(0)),
-        // Derived vibration analytics
-        vibration_peak: Number((raw.vibration_peak ?? (raw.vibration_rms ? raw.vibration_rms * 1.414 : 0.255)).toFixed(3)),
-        crest_factor: Number((raw.crest_factor ?? 2.1).toFixed(2)),
-        dominant_frequency_hz: Number((raw.dominant_frequency_hz ?? (engine_rpm > 100 ? engine_rpm / 60 : 85)).toFixed(1)),
-        spectral_energy: Number((raw.spectral_energy ?? 0.032).toFixed(4)),
+        engine_rpm,
+        cht,
+        egt,
+        oil_pressure,
+        oil_temp,
+        oil_temperature: oil_temp,
+        fuel_flow,
+        fuel_pressure,
+        map,
+        vibration_rms,
+        vibration: vibration_rms,
+        engine_load,
+        vibration_peak,
+        crest_factor,
+        dominant_frequency_hz,
+        spectral_energy,
+        engine_on: isEngineOn,
       };
 
       const flightContext = {
         flight_phase: (raw.flight_phase || data.flight_context?.flight_phase || 'CRUISE').toUpperCase(),
-        throttle: Number(raw.throttle ?? data.flight_context?.throttle ?? 75),
-        altitude: Number(raw.altitude ?? data.flight_context?.altitude ?? 2500),
-        true_airspeed: Number(raw.true_airspeed ?? data.flight_context?.true_airspeed ?? 120),
-        ground_speed: Number(raw.ground_speed ?? data.flight_context?.ground_speed ?? 120),
-        heading: Number(raw.heading ?? data.flight_context?.heading ?? 0),
-        ambient_temperature: Number(raw.ambient_temperature ?? raw.ambient_temp ?? 15),
-        ambient_pressure: Number(raw.ambient_pressure ?? 1013.25),
+        throttle: raw.throttle != null ? Number(raw.throttle) : (data.flight_context?.throttle ?? 75),
+        altitude: raw.altitude != null ? Number(raw.altitude) : (data.flight_context?.altitude ?? 2500),
+        true_airspeed: raw.true_airspeed != null ? Number(raw.true_airspeed) : (data.flight_context?.true_airspeed ?? 120),
+        ground_speed: raw.ground_speed != null ? Number(raw.ground_speed) : (data.flight_context?.ground_speed ?? 120),
+        heading: raw.heading != null ? Number(raw.heading) : (data.flight_context?.heading ?? 0),
+        ambient_temperature: (raw.ambient_temperature ?? raw.ambient_temp) != null ? Number(raw.ambient_temperature ?? raw.ambient_temp) : 15,
+        ambient_pressure: raw.ambient_pressure != null ? Number(raw.ambient_pressure) : 1013.25,
       };
 
       // Calculate Digital Twin Expected State
       const expected = computePhysicsExpected(engineTelemetry, flightContext);
       const deviations = computeDigitalTwinDeviations(engineTelemetry, expected);
 
-      // AI Diagnosis & SOH
-      const incomingDiag = data.diagnosis || localDiagnose(engineTelemetry);
-      const soh = computeSOH(engineTelemetry);
+      // Rolling 32-sample time-series buffer (Requirement 8)
+      const prevWindow = get().telemetryWindow || [];
+      const newWindow = [...prevWindow, engineTelemetry].slice(-32);
+      const windowSamples = newWindow.length;
+      const modelReady = windowSamples >= 32;
 
-      // Smooth Dynamic RUL calculation (responds to wear & deviations, never a countdown timer)
-      const prevRul = get().rulHours ?? 240.0;
-      let targetRul = 240.0;
-      if (soh.overall !== null) {
-        targetRul = (soh.overall / 100) * 240.0;
-        if (incomingDiag.status === 'Critical') targetRul = Math.min(targetRul, 8.5);
-        else if (incomingDiag.status === 'Warning') targetRul = Math.min(targetRul, 45.0);
+      let diagnosis = get().diagnosis;
+      let soh = get().soh;
+      let smoothedRul = get().rulHours;
+      let rulMarginHours = get().rulMarginHours;
+      let finalDecision = get().finalDecision;
+      let maintRecs = get().maintenanceRecs;
+
+      if (!modelReady) {
+        // Window incomplete: Do NOT run inference or display dummy outputs
+        soh = { overall: null, oilScore: null, thermalScore: null, vibScore: null, rpmScore: null, fuelScore: null, anomalyScore: null, degradation: null };
+        smoothedRul = null;
+        rulMarginHours = null;
+        finalDecision = '—';
+        diagnosis = {
+          status: 'COLLECTING_WINDOW',
+          fault_type: '—',
+          severity: '—',
+          confidence: null,
+          anomaly_detected: false,
+          anomaly_score: null,
+          health_score: null,
+          rul_estimate_hours: null,
+          window_samples: windowSamples,
+          window_required: 32,
+          window_ready: false,
+          fault_component: 'Collecting Window',
+          reasoning: [`Collecting telemetry: ${windowSamples} / 32 samples before AI models activate.`],
+          recommended_action: 'Waiting for 32-step input window to stabilize.'
+        };
+        maintRecs = [];
+      } else {
+        // Window complete (>= 32 samples): Active AI inference
+        const incomingDiag = data.diagnosis || localDiagnose(engineTelemetry);
+        soh = computeSOH(engineTelemetry);
+
+        const prevRulVal = get().rulHours ?? 240.0;
+        let targetRul = 240.0;
+        if (soh.overall !== null) {
+          targetRul = (soh.overall / 100) * 240.0;
+          if (incomingDiag.status === 'Critical') targetRul = Math.min(targetRul, 8.5);
+          else if (incomingDiag.status === 'Warning') targetRul = Math.min(targetRul, 45.0);
+          smoothedRul = Number((prevRulVal * 0.90 + targetRul * 0.10).toFixed(2));
+        } else {
+          smoothedRul = null;
+        }
+
+        const missionDemandHours = get().missionDemandHours || 0.22;
+        rulMarginHours = smoothedRul !== null ? Number((smoothedRul - missionDemandHours).toFixed(2)) : null;
+
+        if (soh.overall !== null) {
+          if (incomingDiag.status === 'Critical' || (rulMarginHours !== null && rulMarginHours <= 0)) {
+            finalDecision = 'NO-GO';
+          } else if (incomingDiag.status === 'Warning' || soh.overall < 75 || (rulMarginHours !== null && rulMarginHours < 1.0)) {
+            finalDecision = 'CAUTION';
+          } else {
+            finalDecision = 'GO';
+          }
+        } else {
+          finalDecision = '—';
+        }
+
+        const diagStatus = isEngineOn
+          ? (incomingDiag.status === 'Critical' ? 'Critical' : (incomingDiag.status === 'Warning' ? 'Warning' : 'Healthy'))
+          : 'Standby';
+        const diagFaultType = isEngineOn
+          ? (incomingDiag.fault_type === 'Standby' || !incomingDiag.fault_type ? 'NORMAL' : incomingDiag.fault_type)
+          : 'STANDBY';
+
+        diagnosis = {
+          status: diagStatus,
+          fault_type: diagFaultType,
+          severity: diagStatus === 'Critical' ? 'CRITICAL' : (diagStatus === 'Warning' ? 'MEDIUM' : 'LOW'),
+          confidence: incomingDiag.confidence ?? 0.98,
+          anomaly_detected: Boolean(incomingDiag.anomaly_detected || (soh.anomalyScore && soh.anomalyScore > 35)),
+          anomaly_score: incomingDiag.anomaly_reconstruction_error ?? (soh.anomalyScore || 0),
+          health_score: soh.overall,
+          rul_estimate_hours: smoothedRul,
+          window_samples: 32,
+          window_required: 32,
+          window_ready: true,
+          fault_component: isEngineOn
+            ? (incomingDiag.fault_component === 'Awaiting Telemetry' ? 'All Systems Nominal' : (incomingDiag.fault_component || 'All Systems Nominal'))
+            : 'Awaiting Telemetry',
+          reasoning: isEngineOn
+            ? (incomingDiag.reasoning?.[0]?.includes('standby') ? ['All 10 canonical primary engine channels operating within nominal physical bounds.'] : incomingDiag.reasoning)
+            : ['Engine stream in standby.'],
+          recommended_action: isEngineOn
+            ? (incomingDiag.recommended_action || 'Continue mission profile. All parameters nominal.')
+            : 'Start engine to begin diagnostics.'
+        };
+
+        maintRecs = buildMaintenanceRecs(diagnosis, soh, deviations);
       }
-      const smoothedRul = Number((prevRul * 0.90 + targetRul * 0.10).toFixed(2));
-      const missionDemandHours = get().missionDemandHours || 0.22;
-      const rulMarginHours = Number((smoothedRul - missionDemandHours).toFixed(2));
 
-      // Determine Mission Health Final Decision
-      let finalDecision = 'GO';
-      if (incomingDiag.status === 'Critical' || rulMarginHours <= 0) {
-        finalDecision = 'NO-GO';
-      } else if (incomingDiag.status === 'Warning' || soh.overall < 75 || rulMarginHours < 1.0) {
-        finalDecision = 'CAUTION';
-      }
-
-      // Emergency Recovery Monitor: 30 seconds continuous critical while airborne
+      // Emergency Recovery Monitor (only if airborne & critical)
       const isAirborne = ['TAKEOFF', 'CLIMB', 'CRUISE', 'DESCENT', 'APPROACH'].includes(flightContext.flight_phase);
       let critSecs = get().criticalPersistenceSeconds;
       let emActive = get().emergencyRecoveryActive;
       let emState = get().emergencyState;
       let elp = get().elpSelected;
 
-      if (isAirborne && incomingDiag.status === 'Critical') {
+      if (isAirborne && diagnosis.status === 'Critical') {
         critSecs += 1;
         if (critSecs >= 30 && !emActive) {
           emActive = true;
@@ -483,32 +634,22 @@ export const useEngineStore = create((set, get) => {
         if (!emActive) critSecs = 0;
       }
 
-      // Format diagnosis presentation
-      const isHealthy = isEngineOn && (incomingDiag.status === 'Healthy' || incomingDiag.status === 'Standby');
-      const diagStatus = isEngineOn ? (incomingDiag.status === 'Critical' ? 'Critical' : (incomingDiag.status === 'Warning' ? 'Warning' : 'Healthy')) : 'Standby';
-      const diagFaultType = isEngineOn ? (incomingDiag.fault_type === 'Standby' || !incomingDiag.fault_type ? 'NORMAL' : incomingDiag.fault_type) : 'STANDBY';
-
-      const diagnosis = {
-        status: diagStatus,
-        fault_type: diagFaultType,
-        severity: diagStatus === 'Critical' ? 'CRITICAL' : (diagStatus === 'Warning' ? 'MEDIUM' : 'LOW'),
-        confidence: incomingDiag.confidence ?? 0.98,
-        anomaly_detected: Boolean(incomingDiag.anomaly_detected || (soh.anomalyScore > 35)),
-        anomaly_score: incomingDiag.anomaly_reconstruction_error ?? (soh.anomalyScore || 0),
-        health_score: soh.overall,
-        rul_estimate_hours: smoothedRul,
-        fault_component: isEngineOn ? (incomingDiag.fault_component === 'Awaiting Telemetry' ? 'All Systems Nominal' : (incomingDiag.fault_component || 'All Systems Nominal')) : 'Awaiting Telemetry',
-        reasoning: isEngineOn ? (incomingDiag.reasoning?.[0]?.includes('standby') ? ['All 10 canonical primary engine channels operating within nominal physical bounds.'] : incomingDiag.reasoning) : ['Engine stream in standby.'],
-        recommended_action: isEngineOn ? (incomingDiag.recommended_action?.includes('virtualengine') ? 'Continue mission profile. All parameters nominal.' : (incomingDiag.recommended_action || 'Continue mission profile.')) : 'Start engine on Website 1.'
-      };
-
-      const maintRecs = buildMaintenanceRecs(diagnosis, soh, deviations);
+      const nowTimeStr = new Date().toLocaleTimeString('en-GB');
+      const nowEpoch = Date.now();
 
       set(s => ({
+        syncState: 'SYNCHRONIZED',
+        isStale: false,
         streamConnected: true,
         engineRunning: isEngineOn,
         packetsReceived: s.packetsReceived + 1,
-        lastPacketTime: new Date().toISOString(),
+        lastPacketTime: nowTimeStr,
+        lastPacketTimeEpoch: nowEpoch,
+        lastKnownTelemetry: { ...engineTelemetry },
+        lastKnownTimestamp: nowTimeStr,
+        telemetryWindow: newWindow,
+        windowSamples,
+        modelReady,
         engineTelemetry,
         flightContext,
         telemetry: { ...engineTelemetry, ...flightContext, rpm: engineTelemetry.engine_rpm, vibration: engineTelemetry.vibration_rms },
@@ -527,7 +668,7 @@ export const useEngineStore = create((set, get) => {
         history: [
           ...s.history,
           {
-            time: new Date().toLocaleTimeString(),
+            time: nowTimeStr,
             ...engineTelemetry,
             health_score: soh.overall,
             anomaly_score: diagnosis.anomaly_score
@@ -536,42 +677,170 @@ export const useEngineStore = create((set, get) => {
       }));
     },
 
-    // ── WebSocket Telemetry Connection to Website 1 / Local Backend ─────────
+    // ── Connection Loss Handler (Requirement 11) ────────────────────────────
+    handleConnectionLoss: (reason = 'Connection Lost') => {
+      const lastKnown = get().engineTelemetry || get().lastKnownTelemetry;
+      const lastTimestamp = get().lastPacketTime || get().lastKnownTimestamp;
+
+      set({
+        syncState: 'DISCONNECTED',
+        streamConnected: false,
+        engineRunning: false,
+        isStale: false,
+        lastKnownTelemetry: lastKnown,
+        lastKnownTimestamp: lastTimestamp,
+        engineTelemetry: null,
+        telemetry: {},
+        physicsExpected: null,
+        digitalTwinDeviations: null,
+        telemetryWindow: [],
+        windowSamples: 0,
+        modelReady: false,
+        soh: { overall: null, oilScore: null, thermalScore: null, vibScore: null, rpmScore: null, fuelScore: null, anomalyScore: null, degradation: null },
+        rulHours: null,
+        rulMarginHours: null,
+        finalDecision: '—',
+        diagnosis: {
+          status: 'WAITING_FOR_TELEMETRY',
+          fault_type: '—',
+          severity: '—',
+          confidence: null,
+          anomaly_detected: false,
+          anomaly_score: null,
+          health_score: null,
+          rul_estimate_hours: null,
+          fault_component: 'Waiting for Telemetry',
+          reasoning: [`Virtual Engine disconnected (${reason}). Waiting for synchronized telemetry.`],
+          recommended_action: 'Start Virtual Engine to restore live telemetry.'
+        },
+        maintenanceRecs: []
+      });
+    },
+
+    // ── Staleness Monitor (Requirement 5) ───────────────────────────────────
+    checkStaleness: () => {
+      const { syncState, lastPacketTimeEpoch, dataSource } = get();
+      if (dataSource === 'demo_simulation') return;
+
+      if (syncState === 'SYNCHRONIZED' && lastPacketTimeEpoch > 0) {
+        const elapsedSec = (Date.now() - lastPacketTimeEpoch) / 1000;
+        if (elapsedSec > 6.0 && elapsedSec <= 12.0) {
+          // Transition to STALE: live values become unavailable '—', timestamp marked STALE
+          set({
+            syncState: 'STALE',
+            isStale: true,
+            engineTelemetry: null,
+            telemetry: {},
+            telemetryWindow: [],
+            windowSamples: 0,
+            modelReady: false,
+            soh: { overall: null, oilScore: null, thermalScore: null, vibScore: null, rpmScore: null, fuelScore: null, anomalyScore: null, degradation: null },
+            rulHours: null,
+            finalDecision: '—',
+            diagnosis: {
+              status: 'WAITING_FOR_TELEMETRY',
+              fault_type: '—',
+              severity: '—',
+              confidence: null,
+              anomaly_detected: false,
+              anomaly_score: null,
+              health_score: null,
+              rul_estimate_hours: null,
+              fault_component: 'Telemetry Stale',
+              reasoning: ['Telemetry stream became stale (>6s without packet).'],
+              recommended_action: 'Check Virtual Engine connection.'
+            }
+          });
+        } else if (elapsedSec > 12.0) {
+          get().handleConnectionLoss('Heartbeat timeout > 12s');
+        }
+      }
+    },
+
+    // ── WebSocket Connection Manager (Requirement 17) ───────────────────────
     connectWebSocket: () => {
+      if (get().dataSource === 'demo_simulation') return;
+
       const url = getWsUrl();
-      if (!url || ws) return;
+      if (!url) {
+        if (get().syncState === 'INITIALIZING') {
+          set({ syncState: 'OFFLINE' });
+        }
+        return;
+      }
+
+      if (wsInstance && (wsInstance.readyState === WebSocket.OPEN || wsInstance.readyState === WebSocket.CONNECTING)) {
+        return; // Prevent duplicate connection instances
+      }
+
+      if (wsReconnectTimer) {
+        clearTimeout(wsReconnectTimer);
+        wsReconnectTimer = null;
+      }
+
+      set({ syncState: reconnectAttempts > 0 ? 'RECONNECTING' : 'CONNECTING' });
+
       try {
-        ws = new WebSocket(url);
-        ws.onopen = () => set({ streamConnected: true });
-        ws.onmessage = (e) => {
+        wsInstance = new WebSocket(url);
+
+        wsInstance.onopen = () => {
+          reconnectAttempts = 0;
+          set({ streamConnected: true });
+        };
+
+        wsInstance.onmessage = (e) => {
           try {
             const data = JSON.parse(e.data);
             if (data.type === 'heartbeat') {
-              set({
-                streamConnected: Boolean(data.stream_active),
-                packetsReceived: data.packets_received ?? get().packetsReceived,
-                ingestionRateHz: data.ingestion_rate_hz ?? get().ingestionRateHz,
-                lastPacketTime: data.last_packet_time ?? get().lastPacketTime,
-              });
+              if (!data.stream_active && get().syncState === 'SYNCHRONIZED') {
+                get().checkStaleness();
+              }
+              return;
+            }
+            if (data.type === 'connection_status') {
+              if (data.telemetry) {
+                get().processTelemetryPacket(data);
+              } else if (get().syncState === 'CONNECTING') {
+                set({ syncState: 'OFFLINE' });
+              }
               return;
             }
             get().processTelemetryPacket(data);
           } catch (err) {
-            console.error('WS packet parse error:', err);
+            console.error('WS parse error:', err);
           }
         };
-        ws.onclose = () => {
-          set({ streamConnected: false, engineRunning: false });
-          ws = null;
-          setTimeout(get().connectWebSocket, 4000);
+
+        wsInstance.onclose = () => {
+          wsInstance = null;
+          if (get().syncState === 'SYNCHRONIZED') {
+            get().handleConnectionLoss('WebSocket connection closed');
+          } else {
+            set({ streamConnected: false, syncState: 'DISCONNECTED' });
+          }
+
+          // Exponential backoff reconnect
+          reconnectAttempts++;
+          const delay = Math.min(1000 * Math.pow(2, Math.min(reconnectAttempts, 4)), 10000);
+          wsReconnectTimer = setTimeout(() => {
+            if (get().dataSource !== 'demo_simulation') {
+              get().connectWebSocket();
+            }
+          }, delay);
         };
-        ws.onerror = () => { if (ws) ws.close(); };
+
+        wsInstance.onerror = () => {
+          if (wsInstance) wsInstance.close();
+        };
       } catch (err) {
-        setTimeout(get().connectWebSocket, 5000);
+        set({ syncState: 'ERROR' });
+        reconnectAttempts++;
+        const delay = Math.min(1000 * Math.pow(2, Math.min(reconnectAttempts, 4)), 10000);
+        wsReconnectTimer = setTimeout(get().connectWebSocket, delay);
       }
     },
 
-    // ── Telemetry Host Sync Actions ─────────────────────────────────────
+    // ── Telemetry Host Configuration ────────────────────────────────────────
     setSyncHostUrl: (url) => {
       const clean = (url || '').trim();
       set({ syncHostUrl: clean });
@@ -607,7 +876,7 @@ export const useEngineStore = create((set, get) => {
             streamActive: isAct,
             packets: data.packets_received || 0,
             hasTelemetry: hasTel,
-            message: `Connected (${latencyMs}ms) · ${isAct ? 'Live Stream Active' : 'Endpoint Online'}`
+            message: `Connected (${latencyMs}ms) · ${isAct ? 'Live Stream Active' : 'Endpoint Online (Standby)'}`
           };
         } else {
           return { success: false, status: res.status, latencyMs, message: `HTTP ${res.status}` };
@@ -617,8 +886,26 @@ export const useEngineStore = create((set, get) => {
       }
     },
 
-    // ── Telemetry Polling & Auto-Sync Engine ──────────────────────────────
+    // ── Telemetry Polling & Auto-Sync Engine (ZERO DUMMY GENERATION) ─────────
     refreshStreamStatus: async () => {
+      // Periodic staleness validation
+      get().checkStaleness();
+
+      // In Demo Mode: generate preset or simulation dynamics
+      if (get().dataSource === 'demo_simulation') {
+        if (get().demoMode) {
+          const autoSample = generateRotaxPhysicsSample(get().activeFault);
+          get().processTelemetryPacket(autoSample, true);
+        }
+        return;
+      }
+
+      // If WebSocket is active and streaming live, avoid duplicate HTTP polling
+      if (wsInstance && wsInstance.readyState === WebSocket.OPEN && get().syncState === 'SYNCHRONIZED') {
+        return;
+      }
+
+      // Virtual Engine Mode: Poll authoritative endpoints
       const configuredHost = get().syncHostUrl;
       const originHost = typeof window !== 'undefined' ? `${window.location.origin}/api/telemetry` : '/api/telemetry';
       const endpointsToTry = [
@@ -640,11 +927,10 @@ export const useEngineStore = create((set, get) => {
           if (res.ok) {
             const json = await res.json();
             const raw = json.engine_telemetry || json.telemetry || json;
-            const isFresh = json.seconds_since_last != null ? json.seconds_since_last < 12.0 : true;
-            const rpm = Number(raw?.engine_rpm ?? raw?.rpm ?? 0);
-            const isEngineRunning = raw && (raw.engine_on !== false && rpm > 100);
+            const isFresh = json.seconds_since_last != null ? json.seconds_since_last < 8.0 : true;
+            const hasEngineData = raw && (raw.engine_rpm != null || raw.rpm != null || raw.cht != null || raw.egt != null);
 
-            if ((json.stream_active || isFresh) && isEngineRunning) {
+            if ((json.stream_active || isFresh) && hasEngineData) {
               liveData = json;
               latency = lat;
               break;
@@ -654,33 +940,18 @@ export const useEngineStore = create((set, get) => {
       }
 
       if (liveData) {
-        // Authoritative external stream from Website 1 is live!
-        get().processTelemetryPacket(liveData);
-        set(s => ({
-          streamConnected: true,
-          engineRunning: true,
+        // Authoritative external stream from Virtual Engine is live!
+        get().processTelemetryPacket(liveData, false);
+        set({
           syncSource: 'website1_live',
           syncLatencyMs: latency,
-          syncLastSuccess: new Date().toLocaleTimeString('en-GB'),
-          ingestionRateHz: 1.0,
-          packetsReceived: (s.packetsReceived || 0) + 1
-        }));
+          syncLastSuccess: new Date().toLocaleTimeString('en-GB')
+        });
       } else {
-        // External stream idle or in standby
-        if (get().syncMode === 'auto') {
-          // Keep Digital Twin & 10 gauges active with Rotax 912 physical dynamics
-          const autoSample = generateRotaxPhysicsSample(get().activeFault);
-          get().processTelemetryPacket(autoSample);
-          set(s => ({
-            streamConnected: true,
-            engineRunning: true,
-            syncSource: 'auto_physics',
-            syncLatencyMs: null,
-            ingestionRateHz: 1.0,
-            packetsReceived: (s.packetsReceived || 0) + 1
-          }));
-        } else {
+        // External stream idle or in standby: ZERO DUMMY DATA GENERATION
+        if (get().syncState === 'INITIALIZING' || get().syncState === 'CONNECTING') {
           set({
+            syncState: 'OFFLINE',
             streamConnected: false,
             engineRunning: false,
             syncSource: 'standby',
@@ -690,22 +961,22 @@ export const useEngineStore = create((set, get) => {
       }
     },
 
-    // ── Fault Injection (Enabled ONLY when DEMO MODE = ON in Settings) ────
+    // ── Fault Injection (Strictly for Demo Mode) ────────────────────────────
     injectFault: (faultKey) => {
-      if (!get().demoMode) return;
+      if (!get().demoMode && get().dataSource !== 'demo_simulation') return;
       const preset = DEMO_PRESETS[faultKey] || DEMO_PRESETS.nominal;
       set({ activeFault: faultKey });
-      get().processTelemetryPacket(preset);
+      get().processTelemetryPacket(preset, true);
     },
 
     resetFault: () => {
       set({ activeFault: null });
-      if (get().demoMode) {
-        get().processTelemetryPacket(DEMO_PRESETS.nominal);
+      if (get().demoMode || get().dataSource === 'demo_simulation') {
+        get().processTelemetryPacket(DEMO_PRESETS.nominal, true);
       }
     },
 
-    // ── Trigger Manual Emergency Recovery Test ───────────────────────────
+    // ── Manual Emergency Recovery Test ──────────────────────────────────────
     triggerEmergencyRecovery: () => {
       set({
         emergencyRecoveryActive: true,
@@ -717,3 +988,4 @@ export const useEngineStore = create((set, get) => {
     }
   };
 });
+

@@ -23,7 +23,8 @@ const NAV = [
 
 const Sidebar = () => {
   const alerts = useEngineStore(s => s.alerts);
-  const streamConnected = useEngineStore(s => s.streamConnected);
+  const syncState = useEngineStore(s => s.syncState);
+  const isSynchronized = syncState === 'SYNCHRONIZED';
   const activeAlertsCount = alerts.filter(a => a.sev === 'critical' || a.sev === 'warning').length || 0;
 
   return (
@@ -46,7 +47,9 @@ const Sidebar = () => {
             {/* Telemetry live status dot */}
             <span
               className={`absolute -top-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-white ${
-                streamConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'
+                isSynchronized
+                  ? 'bg-emerald-500 animate-pulse'
+                  : (syncState === 'CONNECTING' || syncState === 'RECONNECTING' ? 'bg-sky-400 animate-ping' : 'bg-slate-300')
               }`}
             />
           </div>

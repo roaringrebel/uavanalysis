@@ -391,15 +391,35 @@ async def process_incoming_telemetry(data: Dict[str, Any], source_type: str = "p
 
     # Append to rolling temporal buffer
     telemetry_buffer.append(norm_dict)
+    window_samples = len(telemetry_buffer)
 
-    # Calculate temporal sequence of 32 frames
-    raw_window = list(telemetry_buffer)
-    while len(raw_window) < 32:
-        raw_window.insert(0, raw_window[0])
-    df_window = pd.DataFrame(raw_window)
+    # Require full 32-sample window before inference (Requirement 8)
+    if window_samples >= 32:
+        df_window = pd.DataFrame(list(telemetry_buffer))
+        ai_diag = run_dl_inference(df_window, norm_dict)
+        ai_diag["window_samples"] = 32
+        ai_diag["window_required"] = 32
+        ai_diag["window_ready"] = True
+    else:
+        ai_diag = {
+            "status": "Initializing",
+            "fault_type": "COLLECTING_WINDOW",
+            "confidence": None,
+            "fault_probabilities": {},
+            "anomaly_detected": False,
+            "anomaly_reconstruction_error": None,
+            "anomaly_threshold": round(anomaly_threshold, 6),
+            "degradation_index": None,
+            "health_score": None,
+            "rul_estimate_hours": None,
+            "fault_component": "Collecting Window",
+            "window_samples": window_samples,
+            "window_required": 32,
+            "window_ready": False,
+            "reasoning": [f"Collecting time-series sequence: {window_samples} / 32 samples before inference."],
+            "recommended_action": "Waiting for 32-sample time-series window to stabilize."
+        }
 
-    # Run AI inference
-    ai_diag = run_dl_inference(df_window, norm_dict)
 
     # Update stream state
     now_epoch = time.time()
@@ -706,14 +726,36 @@ def diagnose_dl_engine(params: EngineParameters):
     """
     norm_dict = params.get_normalized_dict()
     telemetry_buffer.append(norm_dict)
+    window_samples = len(telemetry_buffer)
 
-    raw_window = list(telemetry_buffer)
-    while len(raw_window) < 32:
-        raw_window.insert(0, raw_window[0])
-    df_window = pd.DataFrame(raw_window)
+    if window_samples >= 32:
+        df_window = pd.DataFrame(list(telemetry_buffer))
+        ai_diag = run_dl_inference(df_window, norm_dict)
+        ai_diag["window_samples"] = 32
+        ai_diag["window_required"] = 32
+        ai_diag["window_ready"] = True
+    else:
+        ai_diag = {
+            "status": "Initializing",
+            "fault_type": "COLLECTING_WINDOW",
+            "confidence": None,
+            "fault_probabilities": {},
+            "anomaly_detected": False,
+            "anomaly_reconstruction_error": None,
+            "anomaly_threshold": round(anomaly_threshold, 6),
+            "degradation_index": None,
+            "health_score": None,
+            "rul_estimate_hours": None,
+            "fault_component": "Collecting Window",
+            "window_samples": window_samples,
+            "window_required": 32,
+            "window_ready": False,
+            "reasoning": [f"Collecting time-series sequence: {window_samples} / 32 samples before inference."],
+            "recommended_action": "Waiting for 32-sample time-series window to stabilize."
+        }
 
-    ai_diag = run_dl_inference(df_window, norm_dict)
     return DLDiagnosisResponse(**ai_diag)
+
 
 
 @app.post("/api/diagnose", response_model=DiagnosisResponse)

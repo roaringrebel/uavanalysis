@@ -853,9 +853,10 @@ const HybridCoolingSubassembly = ({ rpm, isSelected, onSelect }) => {
 
 // ─── 3D Sensor Pin Attached to Mechanical Assembly ─────────────────────────
 const SensorPin3D = ({ position, label, value, unit, status, isSelected, onClick }) => {
-  const isCrit = status === 'critical';
-  const isWarn = status === 'warning';
-  const color = isCrit ? '#EF4444' : isWarn ? '#F59E0B' : '#003087';
+  const isInactive = status === 'inactive' || status === 'unavailable';
+  const isCrit = !isInactive && status === 'critical';
+  const isWarn = !isInactive && status === 'warning';
+  const color = isInactive ? '#94A3B8' : isCrit ? '#EF4444' : isWarn ? '#F59E0B' : '#003087';
 
   return (
     <group position={position}>
@@ -882,6 +883,8 @@ const SensorPin3D = ({ position, label, value, unit, status, isSelected, onClick
           className={`cursor-pointer flex items-center gap-1.5 px-2.5 py-1 rounded-xl shadow-md border transition-all duration-200 backdrop-blur-md ${
             isSelected
               ? 'bg-[#003087] text-white border-blue-400 ring-2 ring-blue-300 scale-105'
+              : isInactive
+              ? 'bg-gray-100/90 text-gray-400 border-gray-300 opacity-60'
               : isCrit
               ? 'bg-red-50 text-red-900 border-red-400'
               : isWarn
@@ -892,7 +895,7 @@ const SensorPin3D = ({ position, label, value, unit, status, isSelected, onClick
         >
           <span
             className={`w-2 h-2 rounded-full ${
-              isCrit ? 'bg-red-500 animate-ping' : isWarn ? 'bg-amber-500 animate-pulse' : 'bg-[#003087]'
+              isInactive ? 'bg-gray-400' : isCrit ? 'bg-red-500 animate-ping' : isWarn ? 'bg-amber-500 animate-pulse' : 'bg-[#003087]'
             }`}
           />
           <div className="flex flex-col text-left leading-none">
@@ -910,31 +913,28 @@ const SensorPin3D = ({ position, label, value, unit, status, isSelected, onClick
 
 // ─── Master Rotax 912 iS Assembly Component ────────────────────────────────
 const Rotax912iSAssembly = ({ isCutaway, showPins, selectedSubsystem, onSelectSubsystem }) => {
+  const isSynchronized = useEngineStore((s) => s.isSynchronized);
+  const isSensorAvailable = useEngineStore((s) => s.isSensorAvailable);
   const telemetry = useEngineStore((s) => s.telemetry);
   const diagnosis = useEngineStore((s) => s.diagnosis);
 
-  // Live telemetry parameters
-  const streamConnected = useEngineStore((s) => s.streamConnected);
-  const packetsReceived = useEngineStore((s) => s.packetsReceived);
-  const isStreamActive = Boolean(streamConnected && packetsReceived > 0);
-
-  // Live telemetry parameters (Zeroed/Rest when not receiving)
-  const rawRpm = isStreamActive ? Math.round(telemetry?.rpm ?? 0) : 0;
-  const baseCht = isStreamActive ? (telemetry?.cht != null ? Number(telemetry.cht) : 105.0) : 24.0; // Ambient resting temp
-  const rawOp = isStreamActive ? (telemetry?.oil_pressure ?? 380) : 0;
-  const oilPressure = isStreamActive ? ((rawOp > 0 && rawOp < 25) ? rawOp * 100 : rawOp) : 0;
-  const oilTemp = isStreamActive ? (telemetry?.oil_temp ?? 90) : 24.0;
-  const fuelFlow = isStreamActive ? (telemetry?.fuel_flow ?? 18.5) : 0;
-  const vib = isStreamActive ? (telemetry?.vibration ?? telemetry?.vibration_rms ?? 0.85) : 0;
-  const isRunning = Boolean(isStreamActive && (telemetry?.engine_on || rawRpm > 100));
+  // Live telemetry parameters (strictly null / 0 when not synchronized)
+  const rawRpm = isSynchronized && isSensorAvailable('rpm') ? Math.round(telemetry?.rpm ?? 0) : 0;
+  const baseCht = isSynchronized && isSensorAvailable('cht') && telemetry?.cht != null ? Number(telemetry.cht) : null;
+  const rawOp = isSynchronized && isSensorAvailable('oil_pressure') && telemetry?.oil_pressure != null ? Number(telemetry.oil_pressure) : null;
+  const oilPressure = rawOp != null ? ((rawOp > 0 && rawOp < 25) ? rawOp * 100 : rawOp) : null;
+  const oilTemp = isSynchronized && isSensorAvailable('oil_temp') && telemetry?.oil_temp != null ? Number(telemetry.oil_temp) : null;
+  const fuelFlow = isSynchronized && isSensorAvailable('fuel_flow') && telemetry?.fuel_flow != null ? Number(telemetry.fuel_flow) : null;
+  const vib = isSynchronized && isSensorAvailable('vibration') ? Number(telemetry?.vibration ?? telemetry?.vibration_rms ?? 0) : null;
+  const isRunning = Boolean(isSynchronized && rawRpm > 100);
 
   // Independent per-cylinder CHT calculation
-  const isOverheating = isStreamActive && (diagnosis?.fault_type === 'overheating' || diagnosis?.fault_type === 'high_cht');
-  const isMisfire = isStreamActive && (diagnosis?.fault_type === 'lean_misfire' || diagnosis?.fault_type === 'rpm_instability');
+  const isOverheating = isSynchronized && (diagnosis?.fault_type === 'overheating' || diagnosis?.fault_type === 'high_cht');
+  const isMisfire = isSynchronized && (diagnosis?.fault_type === 'lean_misfire' || diagnosis?.fault_type === 'rpm_instability');
 
   const cylCht = useMemo(() => {
-    if (!isStreamActive || !isRunning) {
-      return { cyl1: 24.0, cyl2: 24.0, cyl3: 24.0, cyl4: 24.0 };
+    if (!isSynchronized || baseCht == null) {
+      return { cyl1: '—', cyl2: '—', cyl3: '—', cyl4: '—' };
     }
     return {
       cyl1: Number((baseCht - 1.2).toFixed(1)),
@@ -942,7 +942,7 @@ const Rotax912iSAssembly = ({ isCutaway, showPins, selectedSubsystem, onSelectSu
       cyl3: Number((isOverheating ? baseCht + 18.5 : isMisfire ? baseCht + 8.2 : baseCht + 2.1).toFixed(1)),
       cyl4: Number((baseCht - 0.5).toFixed(1)),
     };
-  }, [baseCht, isStreamActive, isRunning, isOverheating, isMisfire]);
+  }, [baseCht, isSynchronized, isOverheating, isMisfire]);
 
   // Animation Refs
   const groupRef = useRef();
@@ -1106,9 +1106,9 @@ const Rotax912iSAssembly = ({ isCutaway, showPins, selectedSubsystem, onSelectSu
           <SensorPin3D
             position={[0, 0.82, 1.48]}
             label="PRSU Gearbox (2.43:1)"
-            value={Math.round(rawRpm / 2.43).toLocaleString()}
-            unit="RPM"
-            status="nominal"
+            value={isSynchronized && rawRpm > 0 ? Math.round(rawRpm / 2.43).toLocaleString() : '—'}
+            unit={isSynchronized && rawRpm > 0 ? "RPM" : ""}
+            status={!isSynchronized ? 'inactive' : 'nominal'}
             isSelected={selectedSubsystem === 'gearbox'}
             onClick={() => onSelectSubsystem('gearbox')}
           />
@@ -1118,8 +1118,8 @@ const Rotax912iSAssembly = ({ isCutaway, showPins, selectedSubsystem, onSelectSu
             position={[-1.9, 0.72, 0.6]}
             label="Cyl 1 CHT"
             value={cylCht.cyl1}
-            unit="°C"
-            status={cylCht.cyl1 >= 142 ? 'critical' : cylCht.cyl1 >= 128 ? 'warning' : 'nominal'}
+            unit={cylCht.cyl1 !== '—' ? "°C" : ""}
+            status={cylCht.cyl1 === '—' ? 'inactive' : cylCht.cyl1 >= 142 ? 'critical' : cylCht.cyl1 >= 128 ? 'warning' : 'nominal'}
             isSelected={selectedSubsystem === 'cyl_1'}
             onClick={() => onSelectSubsystem('cyl_1')}
           />
@@ -1129,8 +1129,8 @@ const Rotax912iSAssembly = ({ isCutaway, showPins, selectedSubsystem, onSelectSu
             position={[-1.9, 0.35, -0.6]}
             label="Cyl 3 CHT (Hot)"
             value={cylCht.cyl3}
-            unit="°C"
-            status={cylCht.cyl3 >= 142 ? 'critical' : cylCht.cyl3 >= 128 ? 'warning' : 'nominal'}
+            unit={cylCht.cyl3 !== '—' ? "°C" : ""}
+            status={cylCht.cyl3 === '—' ? 'inactive' : cylCht.cyl3 >= 142 ? 'critical' : cylCht.cyl3 >= 128 ? 'warning' : 'nominal'}
             isSelected={selectedSubsystem === 'cyl_3'}
             onClick={() => onSelectSubsystem('cyl_3')}
           />
@@ -1139,9 +1139,9 @@ const Rotax912iSAssembly = ({ isCutaway, showPins, selectedSubsystem, onSelectSu
           <SensorPin3D
             position={[1.85, 0.85, -0.25]}
             label="Dry Sump Tank"
-            value={(oilPressure / 100).toFixed(1)}
-            unit="bar"
-            status={oilPressure < 200 ? 'critical' : oilPressure < 280 ? 'warning' : 'nominal'}
+            value={oilPressure != null ? (oilPressure / 100).toFixed(1) : '—'}
+            unit={oilPressure != null ? "bar" : ""}
+            status={oilPressure == null ? 'inactive' : oilPressure < 200 ? 'critical' : oilPressure < 280 ? 'warning' : 'nominal'}
             isSelected={selectedSubsystem === 'lubrication'}
             onClick={() => onSelectSubsystem('lubrication')}
           />
@@ -1150,9 +1150,9 @@ const Rotax912iSAssembly = ({ isCutaway, showPins, selectedSubsystem, onSelectSu
           <SensorPin3D
             position={[0, 1.45, 0]}
             label="Dual Injection Rail"
-            value={Number(fuelFlow).toFixed(1)}
-            unit="L/h"
-            status={Number(fuelFlow) > 23 || Number(fuelFlow) < 11 ? 'warning' : 'nominal'}
+            value={fuelFlow != null ? Number(fuelFlow).toFixed(1) : '—'}
+            unit={fuelFlow != null ? "L/h" : ""}
+            status={fuelFlow == null ? 'inactive' : Number(fuelFlow) > 23 || Number(fuelFlow) < 11 ? 'warning' : 'nominal'}
             isSelected={selectedSubsystem === 'injection'}
             onClick={() => onSelectSubsystem('injection')}
           />
@@ -1168,16 +1168,16 @@ const Rotax912Twin = () => {
   const [showPins, setShowPins] = useState(true);
   const [selectedSubsystem, setSelectedSubsystem] = useState(null);
 
+  const isSynchronized = useEngineStore((s) => s.isSynchronized);
+  const isSensorAvailable = useEngineStore((s) => s.isSensorAvailable);
   const telemetry = useEngineStore((s) => s.telemetry);
   const diagnosis = useEngineStore((s) => s.diagnosis);
-  const streamConnected = useEngineStore((s) => s.streamConnected);
 
-  const packetsReceived = useEngineStore((s) => s.packetsReceived);
-  const isStreamActive = Boolean(streamConnected && packetsReceived > 0);
-  const rpm = isStreamActive ? Math.round(telemetry?.rpm ?? 0) : 0;
-  const propRpm = Math.round(rpm / 2.43);
-  const cht = isStreamActive && telemetry?.cht != null ? Number(telemetry.cht).toFixed(1) : '--';
-  const oilP = isStreamActive && telemetry?.oil_pressure != null ? (telemetry.oil_pressure > 25 ? (telemetry.oil_pressure / 100).toFixed(1) : Number(telemetry.oil_pressure).toFixed(1)) : '--';
+  const rpm = isSynchronized && isSensorAvailable('rpm') && telemetry?.rpm != null ? Math.round(telemetry.rpm) : null;
+  const propRpm = rpm != null ? Math.round(rpm / 2.43) : null;
+  const cht = isSynchronized && isSensorAvailable('cht') && telemetry?.cht != null ? Number(telemetry.cht).toFixed(1) : null;
+  const rawOp = isSynchronized && isSensorAvailable('oil_pressure') && telemetry?.oil_pressure != null ? Number(telemetry.oil_pressure) : null;
+  const oilP = rawOp != null ? (rawOp > 25 ? (rawOp / 100).toFixed(1) : rawOp.toFixed(1)) : null;
 
   // Subsystem descriptions for technical inspector
   const SUBSYSTEM_INFO = {
@@ -1255,7 +1255,7 @@ const Rotax912Twin = () => {
         <OrbitControls
           enableZoom={true}
           enablePan={true}
-          autoRotate={!selectedSubsystem && rpm > 0}
+          autoRotate={!selectedSubsystem && isSynchronized && (rpm ?? 0) > 100}
           autoRotateSpeed={0.65}
           maxPolarAngle={Math.PI / 2 + 0.05}
           minDistance={1.8}
@@ -1267,15 +1267,15 @@ const Rotax912Twin = () => {
       {/* ── Top-Left: Rotax 912 iS Sport Identity & Live Telemetry HUD ── */}
       <div className="absolute top-4 left-4 z-20 flex flex-col gap-2 pointer-events-none">
         <div className="flex items-center gap-2 bg-white/95 backdrop-blur-md px-3.5 py-1.5 rounded-xl border border-gray-200/90 shadow-xs">
-          <div className={`w-2.5 h-2.5 rounded-full ${isStreamActive ? 'bg-emerald-500 animate-pulse' : 'bg-amber-400'}`} />
+          <div className={`w-2.5 h-2.5 rounded-full ${isSynchronized ? 'bg-emerald-500 animate-pulse' : 'bg-gray-400'}`} />
           <span className="text-[11px] font-black tracking-wider text-gray-900 uppercase">
             ROTAX 912 iS SPORT · 1,352 cm³ BOXER
           </span>
           <span
             className="text-[9px] font-bold px-2 py-0.5 rounded-md text-white shadow-xs"
-            style={{ background: isStreamActive ? '#003087' : '#64748B' }}
+            style={{ background: isSynchronized ? '#059669' : '#64748B' }}
           >
-            {isStreamActive ? 'SYNCHRONIZED' : 'ENGINE AT REST'}
+            {isSynchronized ? '● VIRTUAL ENGINE SYNCHRONIZED' : 'VIRTUAL STATE: NOT SYNCHRONIZED'}
           </span>
         </div>
 
@@ -1283,22 +1283,30 @@ const Rotax912Twin = () => {
         <div className="flex items-center gap-3 bg-white/90 backdrop-blur-md px-3.5 py-1.5 rounded-xl border border-gray-200/90 shadow-xs text-xs">
           <div className="flex items-center gap-1.5">
             <span className="text-gray-400 font-semibold text-[10px] uppercase">Engine:</span>
-            <span className="font-black text-gray-900 font-mono">{isStreamActive ? `${rpm.toLocaleString()} RPM` : '0 RPM (Rest)'}</span>
+            <span className={`font-black font-mono ${rpm != null ? 'text-gray-900' : 'text-gray-400 opacity-60'}`}>
+              {rpm != null ? `${rpm.toLocaleString()} RPM` : '— RPM'}
+            </span>
           </div>
           <span className="text-gray-300">|</span>
           <div className="flex items-center gap-1.5">
             <span className="text-gray-400 font-semibold text-[10px] uppercase">Prop (÷2.43):</span>
-            <span className="font-black text-orange-600 font-mono">{isStreamActive ? `${propRpm.toLocaleString()} RPM` : '0 RPM'}</span>
+            <span className={`font-black font-mono ${propRpm != null ? 'text-orange-600' : 'text-gray-400 opacity-60'}`}>
+              {propRpm != null ? `${propRpm.toLocaleString()} RPM` : '— RPM'}
+            </span>
           </div>
           <span className="text-gray-300">|</span>
           <div className="flex items-center gap-1.5">
             <span className="text-gray-400 font-semibold text-[10px] uppercase">CHT:</span>
-            <span className="font-black text-gray-900 font-mono">{isStreamActive ? `${cht}°C` : 'Rest (24°C)'}</span>
+            <span className={`font-black font-mono ${cht != null ? 'text-gray-900' : 'text-gray-400 opacity-60'}`}>
+              {cht != null ? `${cht}°C` : '— °C'}
+            </span>
           </div>
           <span className="text-gray-300">|</span>
           <div className="flex items-center gap-1.5">
             <span className="text-gray-400 font-semibold text-[10px] uppercase">Oil P:</span>
-            <span className="font-black text-emerald-700 font-mono">{isStreamActive ? `${oilP} bar` : '0.0 bar'}</span>
+            <span className={`font-black font-mono ${oilP != null ? 'text-emerald-700' : 'text-gray-400 opacity-60'}`}>
+              {oilP != null ? `${oilP} bar` : '— bar'}
+            </span>
           </div>
         </div>
       </div>

@@ -47,20 +47,26 @@ const SubsystemBar = ({ label, score, weight, color }) => {
 };
 
 const AIHealthPage = () => {
-  const streamConnected = useEngineStore((s) => s.streamConnected);
-  const engineTelemetry = useEngineStore((s) => s.engineTelemetry);
+  const isSynchronized = useEngineStore((s) => s.isSynchronized);
+  const syncState = useEngineStore((s) => s.syncState);
+  const modelReady = useEngineStore((s) => s.modelReady);
+  const windowSamples = useEngineStore((s) => s.windowSamples);
+  const windowRequired = useEngineStore((s) => s.windowRequired) || 32;
   const soh = useEngineStore((s) => s.soh);
   const diagnosis = useEngineStore((s) => s.diagnosis);
   const rulHours = useEngineStore((s) => s.rulHours);
   const history = useEngineStore((s) => s.history);
 
-  const hasStream = streamConnected && engineTelemetry !== null;
-  const overallSOH = hasStream && soh?.overall !== null ? soh.overall : null;
-  const anomalyScore = hasStream && soh?.anomalyScore !== null ? soh.anomalyScore : null;
-  const degradationIndex = hasStream && soh?.degradation !== null ? soh.degradation : null;
+  const isReady = isSynchronized && modelReady;
+  const isCollecting = isSynchronized && !modelReady;
+
+  const overallSOH = isReady && soh?.overall !== null && soh?.overall !== undefined ? soh.overall : null;
+  const anomalyScore = isReady && soh?.anomalyScore !== null && soh?.anomalyScore !== undefined ? soh.anomalyScore : null;
+  const degradationIndex = isReady && soh?.degradation !== null && soh?.degradation !== undefined ? soh.degradation : null;
+  const displayRul = isReady && rulHours !== null ? formatSensorValue(rulHours, 1) : null;
 
   // Build degradation and predicted health trends over time
-  const trendData = history.slice(-25).map((h, idx) => {
+  const trendData = isReady ? history.slice(-25).map((h, idx) => {
     const health = h.health_score ?? (overallSOH ?? 95);
     const expectedDegradation = (100 - health) / 100;
     return {
@@ -69,7 +75,7 @@ const AIHealthPage = () => {
       'Degradation': Number(expectedDegradation.toFixed(3)),
       'PredictedHealth': Math.max(10, Math.round(health - (25 - idx) * 0.15))
     };
-  });
+  }) : [];
 
   return (
     <div className="flex-1 flex flex-col h-full bg-[#F8FAFC] text-gray-800 select-none overflow-y-auto p-4 lg:p-7 max-w-[1780px] mx-auto w-full gap-6 font-sans">
@@ -90,8 +96,25 @@ const AIHealthPage = () => {
           </div>
         </div>
 
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-100 border border-slate-200 text-xs font-bold text-slate-700">
-          PROGNOSTIC MODEL: <span className="text-purple-600 font-black">BiLSTM Attention + TFT Transformer</span>
+        <div className="flex items-center gap-3">
+          <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-bold ${
+            isReady
+              ? 'bg-purple-50 border-purple-200 text-purple-700'
+              : isCollecting
+              ? 'bg-blue-50 border-blue-200 text-blue-700'
+              : 'bg-slate-100 border-slate-200 text-slate-500'
+          }`}>
+            <span className={`w-2 h-2 rounded-full ${isReady ? 'bg-purple-500 animate-pulse' : isCollecting ? 'bg-blue-500 animate-ping' : 'bg-gray-400'}`} />
+            {isReady
+              ? '● PROGNOSTIC INPUT READY'
+              : isCollecting
+              ? `COLLECTING TELEMETRY (${windowSamples}/${windowRequired})`
+              : 'AWAITING SYNCHRONIZED TELEMETRY'}
+          </div>
+
+          <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-100 border border-slate-200 text-xs font-bold text-slate-700">
+            MODEL: <span className="text-purple-600 font-black">BiLSTM Attention + TFT Transformer</span>
+          </div>
         </div>
       </div>
 
@@ -107,19 +130,23 @@ const AIHealthPage = () => {
           </div>
           <div className="my-4">
             <div className="flex items-baseline gap-1.5">
-              <span className="text-4xl font-black text-gray-900 tracking-tight font-mono">
-                {overallSOH !== null ? `${overallSOH}%` : '--'}
+              <span className={`text-4xl font-black tracking-tight font-mono ${overallSOH !== null ? 'text-gray-900' : 'text-gray-400 opacity-60'}`}>
+                {overallSOH !== null ? `${overallSOH}%` : '—'}
               </span>
-              <span className="text-sm font-bold text-blue-600">SOH</span>
+              {overallSOH !== null && <span className="text-sm font-bold text-blue-600">SOH</span>}
             </div>
             <p className="text-xs text-gray-500 mt-1">
-              Deterministic cumulative wear score based on lubrication, thermal, and vibration equilibrium.
+              {isReady
+                ? 'Deterministic cumulative wear score based on lubrication, thermal, and vibration equilibrium.'
+                : isCollecting
+                ? `Buffering ${windowSamples} of ${windowRequired} temporal frames...`
+                : 'Virtual Engine not synchronized.'}
             </p>
           </div>
           <div className="pt-3 border-t border-gray-100 text-xs flex justify-between items-center text-gray-500">
             <span>Latent Degradation Index:</span>
-            <span className="font-mono font-bold text-gray-800">
-              {degradationIndex !== null ? degradationIndex : '--'}
+            <span className={`font-mono font-bold ${degradationIndex !== null ? 'text-gray-800' : 'text-gray-400 opacity-60'}`}>
+              {degradationIndex !== null ? degradationIndex : '—'}
             </span>
           </div>
         </div>
@@ -134,18 +161,24 @@ const AIHealthPage = () => {
           </div>
           <div className="my-4">
             <div className="flex items-baseline gap-1.5">
-              <span className="text-4xl font-black text-purple-700 tracking-tight font-mono">
-                {rulHours !== null ? formatSensorValue(rulHours, 1) : '--'}
+              <span className={`text-4xl font-black tracking-tight font-mono ${displayRul !== null ? 'text-purple-700' : 'text-gray-400 opacity-60'}`}>
+                {displayRul !== null ? displayRul : '—'}
               </span>
-              <span className="text-sm font-bold text-purple-600">operating hours</span>
+              {displayRul !== null && <span className="text-sm font-bold text-purple-600">operating hours</span>}
             </div>
             <p className="text-xs text-gray-500 mt-1">
-              Dynamic multi-horizon estimate updating ~1 Hz with exponential smoothing (never a countdown timer).
+              {isReady
+                ? 'Dynamic multi-horizon estimate updating ~1 Hz with exponential smoothing (never a countdown timer).'
+                : isCollecting
+                ? 'Temporal feature extraction in progress...'
+                : 'Virtual Engine not synchronized.'}
             </p>
           </div>
           <div className="pt-3 border-t border-gray-100 text-xs flex justify-between items-center text-gray-500">
             <span>Model Variance ($R^2$):</span>
-            <span className="font-mono font-bold text-emerald-600">0.9708 (TFT Trained)</span>
+            <span className={`font-mono font-bold ${isReady ? 'text-emerald-600' : 'text-gray-400'}`}>
+              {isReady ? '0.9708 (TFT Trained)' : '— (Standby)'}
+            </span>
           </div>
         </div>
 
@@ -159,19 +192,23 @@ const AIHealthPage = () => {
           </div>
           <div className="my-4">
             <div className="flex items-baseline gap-1.5">
-              <span className="text-4xl font-black text-gray-900 tracking-tight font-mono">
-                {anomalyScore !== null ? anomalyScore : '--'}
+              <span className={`text-4xl font-black tracking-tight font-mono ${anomalyScore !== null ? 'text-gray-900' : 'text-gray-400 opacity-60'}`}>
+                {anomalyScore !== null ? anomalyScore : '—'}
               </span>
-              <span className="text-sm font-bold text-gray-400">/ 100</span>
+              {anomalyScore !== null && <span className="text-sm font-bold text-gray-400">/ 100</span>}
             </div>
             <p className="text-xs text-gray-500 mt-1">
-              Unsupervised autoencoder divergence across nominal operational envelopment.
+              {isReady
+                ? 'Unsupervised autoencoder divergence across nominal operational envelopment.'
+                : isCollecting
+                ? 'Window accumulation in progress...'
+                : 'Virtual Engine not synchronized.'}
             </p>
           </div>
           <div className="pt-3 border-t border-gray-100 text-xs flex justify-between items-center text-gray-500">
             <span>Primary Fault Attribution:</span>
-            <span className="font-bold text-orange-700 truncate max-w-[150px]">
-              {diagnosis?.fault_type || 'NORMAL'}
+            <span className={`font-bold truncate max-w-[150px] ${isReady ? 'text-orange-700' : 'text-gray-400'}`}>
+              {isReady ? (diagnosis?.fault_type || 'NORMAL') : '—'}
             </span>
           </div>
         </div>
@@ -188,29 +225,39 @@ const AIHealthPage = () => {
               </h2>
               <p className="text-xs text-gray-500">BiLSTM Attention tracking inflection points</p>
             </div>
-            <span className="text-xs font-mono font-bold text-orange-600">
-              Index: {degradationIndex !== null ? degradationIndex : '--'}
+            <span className={`text-xs font-mono font-bold ${degradationIndex !== null ? 'text-orange-600' : 'text-gray-400'}`}>
+              Index: {degradationIndex !== null ? degradationIndex : '—'}
             </span>
           </div>
 
-          <div className="h-64 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={trendData}>
-                <defs>
-                  <linearGradient id="degGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#EA580C" stopOpacity={0.4} />
-                    <stop offset="95%" stopColor="#EA580C" stopOpacity={0.0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
-                <XAxis dataKey="time" stroke="#94A3B8" fontSize={10} tickLine={false} />
-                <YAxis domain={[0, 1]} stroke="#94A3B8" fontSize={10} tickLine={false} />
-                <Tooltip
-                  contentStyle={{ background: '#0F172A', border: 'none', borderRadius: '8px', color: '#FFF', fontSize: '11px' }}
-                />
-                <Area type="monotone" dataKey="Degradation" stroke="#EA580C" strokeWidth={2.5} fillOpacity={1} fill="url(#degGradient)" />
-              </AreaChart>
-            </ResponsiveContainer>
+          <div className="h-64 w-full flex items-center justify-center">
+            {trendData.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={trendData}>
+                  <defs>
+                    <linearGradient id="degGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#EA580C" stopOpacity={0.4} />
+                      <stop offset="95%" stopColor="#EA580C" stopOpacity={0.0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
+                  <XAxis dataKey="time" stroke="#94A3B8" fontSize={10} tickLine={false} />
+                  <YAxis domain={[0, 1]} stroke="#94A3B8" fontSize={10} tickLine={false} />
+                  <Tooltip
+                    contentStyle={{ background: '#0F172A', border: 'none', borderRadius: '8px', color: '#FFF', fontSize: '11px' }}
+                  />
+                  <Area type="monotone" dataKey="Degradation" stroke="#EA580C" strokeWidth={2.5} fillOpacity={1} fill="url(#degGradient)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="text-center p-6 text-gray-400">
+                <LineChart size={32} className="mx-auto mb-2 text-gray-300" />
+                <p className="text-xs font-bold text-gray-600">
+                  {isCollecting ? `Accumulating Time-Series (${windowSamples}/${windowRequired} frames)...` : 'Virtual Engine Not Synchronized'}
+                </p>
+                <p className="text-[11px] text-gray-400 mt-1">Degradation trajectory will render once 32 time-series samples are buffered.</p>
+              </div>
+            )}
           </div>
         </div>
 
@@ -223,24 +270,34 @@ const AIHealthPage = () => {
               </h2>
               <p className="text-xs text-gray-500">Temporal Fusion Transformer operational degradation trajectory</p>
             </div>
-            <span className="text-xs font-mono font-bold text-blue-600">
-              SOH: {overallSOH !== null ? `${overallSOH}%` : '--'}
+            <span className={`text-xs font-mono font-bold ${overallSOH !== null ? 'text-blue-600' : 'text-gray-400'}`}>
+              SOH: {overallSOH !== null ? `${overallSOH}%` : '—'}
             </span>
           </div>
 
-          <div className="h-64 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <RechartsLineChart data={trendData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
-                <XAxis dataKey="time" stroke="#94A3B8" fontSize={10} tickLine={false} />
-                <YAxis domain={[40, 100]} stroke="#94A3B8" fontSize={10} tickLine={false} />
-                <Tooltip
-                  contentStyle={{ background: '#0F172A', border: 'none', borderRadius: '8px', color: '#FFF', fontSize: '11px' }}
-                />
-                <Line type="monotone" dataKey="SOH" stroke="#2563EB" strokeWidth={2.5} dot={false} />
-                <Line type="monotone" dataKey="PredictedHealth" stroke="#9333EA" strokeWidth={2} strokeDasharray="4 4" dot={false} />
-              </RechartsLineChart>
-            </ResponsiveContainer>
+          <div className="h-64 w-full flex items-center justify-center">
+            {trendData.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <RechartsLineChart data={trendData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
+                  <XAxis dataKey="time" stroke="#94A3B8" fontSize={10} tickLine={false} />
+                  <YAxis domain={[40, 100]} stroke="#94A3B8" fontSize={10} tickLine={false} />
+                  <Tooltip
+                    contentStyle={{ background: '#0F172A', border: 'none', borderRadius: '8px', color: '#FFF', fontSize: '11px' }}
+                  />
+                  <Line type="monotone" dataKey="SOH" stroke="#2563EB" strokeWidth={2.5} dot={false} />
+                  <Line type="monotone" dataKey="PredictedHealth" stroke="#9333EA" strokeWidth={2} strokeDasharray="4 4" dot={false} />
+                </RechartsLineChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="text-center p-6 text-gray-400">
+                <TrendingUp size={32} className="mx-auto mb-2 text-gray-300" />
+                <p className="text-xs font-bold text-gray-600">
+                  {isCollecting ? `Accumulating Time-Series (${windowSamples}/${windowRequired} frames)...` : 'Virtual Engine Not Synchronized'}
+                </p>
+                <p className="text-[11px] text-gray-400 mt-1">Multi-cycle prognostic forecast requires active synchronized telemetry.</p>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -259,7 +316,7 @@ const AIHealthPage = () => {
             <SubsystemBar
               key={sub.key}
               label={sub.label}
-              score={soh ? soh[sub.key] : null}
+              score={isReady && soh ? soh[sub.key] : null}
               weight={sub.weight}
               color={sub.color}
             />

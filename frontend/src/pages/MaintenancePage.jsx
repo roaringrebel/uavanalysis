@@ -12,25 +12,30 @@ const priorityConfig = {
 };
 
 const MaintenancePage = () => {
+  const isSynchronized = useEngineStore((s) => s.isSynchronized);
+  const syncState = useEngineStore((s) => s.syncState);
+  const modelReady = useEngineStore((s) => s.modelReady);
   const diagnosis = useEngineStore((s) => s.diagnosis);
   const soh = useEngineStore((s) => s.soh);
   const engineTelemetry = useEngineStore((s) => s.engineTelemetry);
   const maintenanceRecs = useEngineStore((s) => s.maintenanceRecs);
   const rulHours = useEngineStore((s) => s.rulHours);
 
+  const isReady = isSynchronized && modelReady;
   const [exported, setExported] = useState(false);
 
   const handleExportReport = () => {
     const reportData = {
       title: "Rotax 912 ULS Maintenance & AI Health Audit Report",
       timestamp: new Date().toISOString(),
-      soh_overall_score: soh?.overall,
-      anomaly_score: soh?.anomalyScore,
-      rul_hours: rulHours,
-      status: diagnosis?.status || 'HEALTHY',
-      diagnosed_fault: diagnosis?.fault_type || 'NORMAL',
-      telemetry_snapshot: engineTelemetry,
-      condition_based_recommendations: maintenanceRecs || []
+      sync_state: syncState,
+      soh_overall_score: isReady ? soh?.overall : null,
+      anomaly_score: isReady ? soh?.anomalyScore : null,
+      rul_hours: isReady ? rulHours : null,
+      status: isReady ? (diagnosis?.status || 'HEALTHY') : 'STANDBY',
+      diagnosed_fault: isReady ? (diagnosis?.fault_type || 'NORMAL') : 'AWAITING_TELEMETRY',
+      telemetry_snapshot: isSynchronized ? engineTelemetry : null,
+      condition_based_recommendations: isReady ? (maintenanceRecs || []) : []
     };
 
     const blob = new Blob([JSON.stringify(reportData, null, 2)], { type: 'application/json' });
@@ -81,33 +86,37 @@ const MaintenancePage = () => {
           <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider block">HEALTH STATUS</span>
           <div className="mt-2 flex items-center gap-2">
             <span className={`text-2xl font-black uppercase tracking-tight ${
-              diagnosis?.status === 'Critical' ? 'text-red-600' : (diagnosis?.status === 'Warning' ? 'text-amber-600' : 'text-emerald-600')
+              !isReady
+                ? 'text-gray-400 opacity-60'
+                : diagnosis?.status === 'Critical' ? 'text-red-600' : (diagnosis?.status === 'Warning' ? 'text-amber-600' : 'text-emerald-600')
             }`}>
-              {diagnosis?.status || 'Healthy'}
+              {isReady ? (diagnosis?.status || 'Healthy') : '—'}
             </span>
           </div>
-          <p className="text-xs text-gray-500 mt-1">SOH: {soh?.overall !== null ? `${soh.overall}%` : '--'}</p>
+          <p className="text-xs text-gray-500 mt-1">SOH: {isReady && soh?.overall !== null ? `${soh.overall}%` : '—'}</p>
         </div>
 
         <div className="bg-white border border-gray-200/80 rounded-2xl p-5 shadow-xs">
           <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider block">REMAINING USEFUL LIFE</span>
           <div className="mt-2">
-            <span className="text-2xl font-black text-purple-700 font-mono tracking-tight">
-              {rulHours !== null ? `${formatSensorValue(rulHours, 1)} h` : '--'}
+            <span className={`text-2xl font-black font-mono tracking-tight ${isReady && rulHours !== null ? 'text-purple-700' : 'text-gray-400 opacity-60'}`}>
+              {isReady && rulHours !== null ? `${formatSensorValue(rulHours, 1)} h` : '—'}
             </span>
           </div>
-          <p className="text-xs text-gray-500 mt-1">Time remaining before required major overhaul</p>
+          <p className="text-xs text-gray-500 mt-1">
+            {isReady ? 'Time remaining before required major overhaul' : 'Virtual Engine not synchronized'}
+          </p>
         </div>
 
         <div className="bg-white border border-gray-200/80 rounded-2xl p-5 shadow-xs">
           <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider block">ACTION REQUIRED</span>
           <div className="mt-2">
-            <span className="text-sm font-black text-gray-900 block truncate">
-              {maintenanceRecs?.[0]?.title || 'Routine Servicing'}
+            <span className={`text-sm font-black block truncate ${isReady ? 'text-gray-900' : 'text-gray-400'}`}>
+              {isReady ? (maintenanceRecs?.[0]?.title || 'Routine Servicing') : '—'}
             </span>
           </div>
           <p className="text-xs text-gray-500 mt-1">
-            Priority: <strong className="text-orange-600">{maintenanceRecs?.[0]?.priority || 'ROUTINE'}</strong>
+            Priority: <strong className={isReady ? 'text-orange-600' : 'text-gray-400'}>{isReady ? (maintenanceRecs?.[0]?.priority || 'ROUTINE') : '—'}</strong>
           </p>
         </div>
       </div>
@@ -122,12 +131,12 @@ const MaintenancePage = () => {
             <p className="text-xs text-gray-500">Condition-based recommendations derived from 10-sensor physical deviations</p>
           </div>
           <span className="text-xs font-bold text-gray-400">
-            {maintenanceRecs?.length || 0} ACTIVE ADVISORIES
+            {isReady ? (maintenanceRecs?.length || 0) : 0} ACTIVE ADVISORIES
           </span>
         </div>
 
         <div className="space-y-4">
-          {maintenanceRecs && maintenanceRecs.length > 0 ? (
+          {isReady && maintenanceRecs && maintenanceRecs.length > 0 ? (
             maintenanceRecs.map((rec) => {
               const cfg = priorityConfig[rec.priority] || priorityConfig.ROUTINE;
 
@@ -169,9 +178,21 @@ const MaintenancePage = () => {
             })
           ) : (
             <div className="py-12 text-center text-gray-400">
-              <CheckCircle size={36} className="mx-auto text-emerald-500 mb-2" />
-              <p className="text-sm font-bold text-gray-700">All Engine Subsystems Within Nominal Operating Envelope</p>
-              <p className="text-xs text-gray-400 mt-0.5">Next scheduled 50-hour inspection interval tracks normally.</p>
+              {isReady ? (
+                <>
+                  <CheckCircle size={36} className="mx-auto text-emerald-500 mb-2" />
+                  <p className="text-sm font-bold text-gray-700">All Engine Subsystems Within Nominal Operating Envelope</p>
+                  <p className="text-xs text-gray-400 mt-0.5">Next scheduled 50-hour inspection interval tracks normally.</p>
+                </>
+              ) : (
+                <>
+                  <div className="w-9 h-9 mx-auto mb-2 rounded-full bg-gray-100 flex items-center justify-center text-gray-400">
+                    <Wrench size={20} />
+                  </div>
+                  <p className="text-sm font-bold text-gray-600">Waiting for Synchronized Telemetry</p>
+                  <p className="text-xs text-gray-400 mt-0.5">Condition-based maintenance advisories generate once live telemetry is connected.</p>
+                </>
+              )}
             </div>
           )}
         </div>

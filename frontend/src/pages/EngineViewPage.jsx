@@ -9,23 +9,25 @@ import Rotax912Twin from '../Components/engine/Rotax912Twin';
 import MiniSparkline from '../Components/common/MiniSparkline';
 
 const EngineViewPage = () => {
-  const streamConnected = useEngineStore((s) => s.streamConnected);
+  const isSynchronized = useEngineStore((s) => s.isSynchronized);
+  const syncState = useEngineStore((s) => s.syncState);
+  const isSensorAvailable = useEngineStore((s) => s.isSensorAvailable);
   const engineTelemetry = useEngineStore((s) => s.engineTelemetry);
   const flightContext = useEngineStore((s) => s.flightContext);
   const diagnosis = useEngineStore((s) => s.diagnosis);
   const history = useEngineStore((s) => s.history);
   const digitalTwinDeviations = useEngineStore((s) => s.digitalTwinDeviations);
 
-  const hasStream = streamConnected && engineTelemetry !== null;
-  const rpm = hasStream ? Number(engineTelemetry.engine_rpm || 0) : 0;
-  const isRunning = rpm > 500;
-  const engineStatus = hasStream ? (isRunning ? 'RUNNING' : 'STANDBY') : 'OFF';
+  const rawRpm = isSynchronized && isSensorAvailable('rpm') && engineTelemetry?.engine_rpm != null ? Number(engineTelemetry.engine_rpm) : null;
+  const isRunning = rawRpm != null && rawRpm > 500;
+  const engineStatus = isSynchronized ? (isRunning ? 'RUNNING' : 'STANDBY') : 'NOT SYNCHRONIZED';
 
-  const vibRms = hasStream ? engineTelemetry.vibration_rms : null;
-  const vibPeak = hasStream ? engineTelemetry.vibration_peak : null;
-  const crestFactor = hasStream ? engineTelemetry.crest_factor : null;
-  const domFreq = hasStream ? engineTelemetry.dominant_frequency_hz : null;
-  const specEnergy = hasStream ? engineTelemetry.spectral_energy : null;
+  const baseCht = isSynchronized && isSensorAvailable('cht') && engineTelemetry?.cht != null ? Number(engineTelemetry.cht) : null;
+  const vibRms = isSynchronized && isSensorAvailable('vibration') && engineTelemetry?.vibration_rms != null ? engineTelemetry.vibration_rms : null;
+  const vibPeak = isSynchronized && isSensorAvailable('vibration') && engineTelemetry?.vibration_peak != null ? engineTelemetry.vibration_peak : null;
+  const crestFactor = isSynchronized && isSensorAvailable('vibration') && engineTelemetry?.crest_factor != null ? engineTelemetry.crest_factor : null;
+  const domFreq = isSynchronized && isSensorAvailable('vibration') && engineTelemetry?.dominant_frequency_hz != null ? engineTelemetry.dominant_frequency_hz : null;
+  const specEnergy = isSynchronized && isSensorAvailable('vibration') && engineTelemetry?.spectral_energy != null ? engineTelemetry.spectral_energy : null;
   const peakToPeak = vibPeak !== null ? Number((vibPeak * 1.9).toFixed(3)) : null;
 
   return (
@@ -48,14 +50,14 @@ const EngineViewPage = () => {
           </p>
         </div>
 
-        {/* Engine Status Badge: RUNNING / STANDBY / OFF */}
+        {/* Engine Status Badge: RUNNING / STANDBY / NOT SYNCHRONIZED */}
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl border text-xs font-bold shadow-2xs">
             <span className="text-gray-400 text-[10px] uppercase font-bold">ENGINE STATUS:</span>
             <span className={`inline-flex items-center gap-1.5 font-black uppercase tracking-wider ${
               engineStatus === 'RUNNING'
                 ? 'text-emerald-700'
-                : (engineStatus === 'STANDBY' ? 'text-amber-700' : 'text-gray-500')
+                : (engineStatus === 'STANDBY' ? 'text-amber-700' : 'text-gray-400')
             }`}>
               <span className={`w-2 h-2 rounded-full ${
                 engineStatus === 'RUNNING' ? 'bg-emerald-500 animate-pulse' : (engineStatus === 'STANDBY' ? 'bg-amber-500' : 'bg-gray-400')
@@ -65,7 +67,7 @@ const EngineViewPage = () => {
           </div>
 
           <div className="px-3 py-1.5 rounded-xl bg-slate-100 border border-slate-200 text-xs font-bold text-slate-700">
-            FLIGHT PHASE: <span className="text-orange-600 font-black">{flightContext?.flight_phase || 'STANDBY'}</span>
+            FLIGHT PHASE: <span className="text-orange-600 font-black">{isSynchronized ? (flightContext?.flight_phase || 'STANDBY') : '—'}</span>
           </div>
         </div>
       </div>
@@ -81,8 +83,8 @@ const EngineViewPage = () => {
               </h2>
               <p className="text-xs text-gray-500">Live rotational dynamics & cylinder thermal mapping</p>
             </div>
-            <span className="text-xs font-mono font-bold text-gray-500">
-              CRANKSHAFT: {hasStream ? formatSensorValue(engineTelemetry?.engine_rpm, 0) : '--'} RPM
+            <span className={`text-xs font-mono font-bold ${rawRpm != null ? 'text-gray-900' : 'text-gray-400 opacity-60'}`}>
+              CRANKSHAFT: {rawRpm != null ? formatSensorValue(rawRpm, 0) : '—'} RPM
             </span>
           </div>
 
@@ -93,26 +95,26 @@ const EngineViewPage = () => {
           <div className="grid grid-cols-4 gap-2 mt-4 pt-3 border-t border-gray-100 text-center text-xs">
             <div className="p-2 rounded-lg bg-slate-50 border border-slate-100">
               <span className="text-[10px] text-gray-400 font-bold block">CYL 1 CHT</span>
-              <span className="font-bold text-gray-800 font-mono">
-                {hasStream ? `${formatSensorValue((engineTelemetry?.cht ?? 94) - 0.8, 1)} °C` : '--'}
+              <span className={`font-bold font-mono ${baseCht != null ? 'text-gray-800' : 'text-gray-400 opacity-60'}`}>
+                {baseCht != null ? `${formatSensorValue(baseCht - 0.8, 1)} °C` : '—'}
               </span>
             </div>
             <div className="p-2 rounded-lg bg-slate-50 border border-slate-100">
               <span className="text-[10px] text-gray-400 font-bold block">CYL 2 CHT</span>
-              <span className="font-bold text-gray-800 font-mono">
-                {hasStream ? `${formatSensorValue((engineTelemetry?.cht ?? 94) + 0.4, 1)} °C` : '--'}
+              <span className={`font-bold font-mono ${baseCht != null ? 'text-gray-800' : 'text-gray-400 opacity-60'}`}>
+                {baseCht != null ? `${formatSensorValue(baseCht + 0.4, 1)} °C` : '—'}
               </span>
             </div>
             <div className="p-2 rounded-lg bg-slate-50 border border-slate-100">
               <span className="text-[10px] text-gray-400 font-bold block">CYL 3 CHT</span>
-              <span className="font-bold text-gray-800 font-mono">
-                {hasStream ? `${formatSensorValue((engineTelemetry?.cht ?? 94) + 1.2, 1)} °C` : '--'}
+              <span className={`font-bold font-mono ${baseCht != null ? 'text-gray-800' : 'text-gray-400 opacity-60'}`}>
+                {baseCht != null ? `${formatSensorValue(baseCht + 1.2, 1)} °C` : '—'}
               </span>
             </div>
             <div className="p-2 rounded-lg bg-slate-50 border border-slate-100">
               <span className="text-[10px] text-gray-400 font-bold block">CYL 4 CHT</span>
-              <span className="font-bold text-gray-800 font-mono">
-                {hasStream ? `${formatSensorValue((engineTelemetry?.cht ?? 94) - 0.5, 1)} °C` : '--'}
+              <span className={`font-bold font-mono ${baseCht != null ? 'text-gray-800' : 'text-gray-400 opacity-60'}`}>
+                {baseCht != null ? `${formatSensorValue(baseCht - 0.5, 1)} °C` : '—'}
               </span>
             </div>
           </div>
@@ -146,10 +148,10 @@ const EngineViewPage = () => {
               <div className="flex items-baseline justify-between mt-1">
                 <span className="text-xs font-bold text-gray-500 uppercase">VIBRATION RMS</span>
                 <div className="flex items-baseline gap-1">
-                  <span className="text-3xl font-black text-orange-600 font-mono tracking-tight">
+                  <span className={`text-3xl font-black font-mono tracking-tight ${vibRms != null ? 'text-orange-600' : 'text-gray-400 opacity-60'}`}>
                     {formatSensorValue(vibRms, 3)}
                   </span>
-                  <span className="text-sm font-bold text-gray-500">g</span>
+                  {vibRms != null && <span className="text-sm font-bold text-gray-500">g</span>}
                 </div>
               </div>
               <p className="text-[10px] text-gray-500 mt-1">
@@ -161,32 +163,32 @@ const EngineViewPage = () => {
             <div className="grid grid-cols-2 gap-2.5 text-xs">
               <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/70">
                 <span className="text-[10px] text-gray-400 font-bold uppercase block">PEAK</span>
-                <span className="text-base font-black text-gray-900 font-mono">
-                  {formatSensorValue(vibPeak, 3)} <span className="text-[10px] font-normal text-gray-400">g</span>
+                <span className={`text-base font-black font-mono ${vibPeak != null ? 'text-gray-900' : 'text-gray-400 opacity-60'}`}>
+                  {formatSensorValue(vibPeak, 3)} {vibPeak != null && <span className="text-[10px] font-normal text-gray-400">g</span>}
                 </span>
               </div>
               <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/70">
                 <span className="text-[10px] text-gray-400 font-bold uppercase block">PEAK-TO-PEAK</span>
-                <span className="text-base font-black text-gray-900 font-mono">
-                  {formatSensorValue(peakToPeak, 3)} <span className="text-[10px] font-normal text-gray-400">g</span>
+                <span className={`text-base font-black font-mono ${peakToPeak != null ? 'text-gray-900' : 'text-gray-400 opacity-60'}`}>
+                  {formatSensorValue(peakToPeak, 3)} {peakToPeak != null && <span className="text-[10px] font-normal text-gray-400">g</span>}
                 </span>
               </div>
               <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/70">
                 <span className="text-[10px] text-gray-400 font-bold uppercase block">CREST FACTOR</span>
-                <span className="text-base font-black text-gray-900 font-mono">
+                <span className={`text-base font-black font-mono ${crestFactor != null ? 'text-gray-900' : 'text-gray-400 opacity-60'}`}>
                   {formatSensorValue(crestFactor, 2)}
                 </span>
               </div>
               <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/70">
                 <span className="text-[10px] text-gray-400 font-bold uppercase block">DOMINANT FREQ</span>
-                <span className="text-base font-black text-gray-900 font-mono">
-                  {formatSensorValue(domFreq, 1)} <span className="text-[10px] font-normal text-gray-400">Hz</span>
+                <span className={`text-base font-black font-mono ${domFreq != null ? 'text-gray-900' : 'text-gray-400 opacity-60'}`}>
+                  {formatSensorValue(domFreq, 1)} {domFreq != null && <span className="text-[10px] font-normal text-gray-400">Hz</span>}
                 </span>
               </div>
               <div className="col-span-2 p-2.5 rounded-xl bg-slate-50 border border-slate-200/70 flex justify-between items-center">
                 <span className="text-[10px] text-gray-400 font-bold uppercase">SPECTRAL ENERGY</span>
-                <span className="text-sm font-black text-gray-900 font-mono">
-                  {formatSensorValue(specEnergy, 4)} <span className="text-[10px] font-normal text-gray-400">g²</span>
+                <span className={`text-sm font-black font-mono ${specEnergy != null ? 'text-gray-900' : 'text-gray-400 opacity-60'}`}>
+                  {formatSensorValue(specEnergy, 4)} {specEnergy != null && <span className="text-[10px] font-normal text-gray-400">g²</span>}
                 </span>
               </div>
             </div>
@@ -216,8 +218,9 @@ const EngineViewPage = () => {
             </h2>
             <p className="text-xs text-gray-500">Live authoritative telemetry values from Website 1</p>
           </div>
-          <span className="text-xs text-emerald-700 font-bold flex items-center gap-1">
-            <Radio size={12} className="animate-pulse" /> Live Telemetry
+          <span className={`text-xs font-bold flex items-center gap-1 ${isSynchronized ? 'text-emerald-700' : 'text-gray-400'}`}>
+            <Radio size={12} className={isSynchronized ? 'animate-pulse' : ''} />
+            {isSynchronized ? 'Live Telemetry' : 'Offline / Standby'}
           </span>
         </div>
 

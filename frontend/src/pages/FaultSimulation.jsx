@@ -18,7 +18,11 @@ const DEMO_FAULTS = [
 ];
 
 const FaultSimulation = () => {
-  const streamConnected = useEngineStore((s) => s.streamConnected);
+  const isSynchronized = useEngineStore((s) => s.isSynchronized);
+  const syncState = useEngineStore((s) => s.syncState);
+  const modelReady = useEngineStore((s) => s.modelReady);
+  const windowSamples = useEngineStore((s) => s.windowSamples);
+  const windowRequired = useEngineStore((s) => s.windowRequired) || 32;
   const engineTelemetry = useEngineStore((s) => s.engineTelemetry);
   const diagnosis = useEngineStore((s) => s.diagnosis);
   const soh = useEngineStore((s) => s.soh);
@@ -29,15 +33,17 @@ const FaultSimulation = () => {
   const injectFault = useEngineStore((s) => s.injectFault);
   const resetFault = useEngineStore((s) => s.resetFault);
 
-  const hasStream = streamConnected && engineTelemetry !== null;
-  const faultName = hasStream ? (diagnosis?.fault_type || 'NORMAL') : 'AWAITING TELEMETRY';
-  const severity = hasStream ? (diagnosis?.severity || 'LOW') : '--';
-  const confidence = hasStream && diagnosis?.confidence != null ? Math.round(diagnosis.confidence * 100) : null;
-  const anomalyScore = hasStream && soh?.anomalyScore != null ? soh.anomalyScore : null;
+  const isReady = isSynchronized && modelReady;
+  const isCollecting = isSynchronized && !modelReady;
+
+  const faultName = isReady ? (diagnosis?.fault_type || 'NORMAL') : (isCollecting ? `COLLECTING (${windowSamples}/${windowRequired})` : '—');
+  const severity = isReady ? (diagnosis?.severity || 'LOW') : '—';
+  const confidence = isReady && diagnosis?.confidence != null ? Math.round(diagnosis.confidence * 100) : null;
+  const anomalyScore = isReady && soh?.anomalyScore != null ? soh.anomalyScore : null;
 
   // Build 10-sensor evidence breakdown (Section 16 Requirement)
   const contributingSensors = [];
-  if (digitalTwinDeviations) {
+  if (isReady && digitalTwinDeviations) {
     SENSOR_CONFIG_10.forEach(s => {
       const dev = digitalTwinDeviations[s.id];
       if (dev && dev.status !== 'NORMAL') {
@@ -73,10 +79,30 @@ const FaultSimulation = () => {
         </div>
 
         <div className="flex items-center gap-3">
+          {/* Synchronized Status Pill */}
+          <div className="flex items-center gap-2">
+            <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider ${
+              isReady
+                ? 'bg-emerald-100 text-emerald-700 border border-emerald-200'
+                : isCollecting
+                ? 'bg-blue-100 text-blue-700 border border-blue-200'
+                : 'bg-gray-100 text-gray-500 border border-gray-200'
+            }`}>
+              <span className={`w-2 h-2 rounded-full ${
+                isReady ? 'bg-emerald-500 animate-pulse' : isCollecting ? 'bg-blue-500 animate-ping' : 'bg-gray-400'
+              }`} />
+              {isReady
+                ? '● MODEL INPUT READY'
+                : isCollecting
+                ? `COLLECTING TELEMETRY (${windowSamples}/${windowRequired})`
+                : 'WAITING FOR SYNCHRONIZED TELEMETRY'}
+            </span>
+          </div>
+
           {demoMode && (
             <div className="flex items-center gap-2">
               <span className="text-xs font-bold text-orange-700 bg-orange-100 px-3 py-1 rounded-full border border-orange-200">
-                DEMO INJECTION ACTIVE
+                DEMO DATA · NOT LIVE TELEMETRY
               </span>
               {activeFault && (
                 <button
@@ -98,11 +124,17 @@ const FaultSimulation = () => {
           <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider block">CURRENT DIAGNOSIS</span>
           <div className="mt-2">
             <h2 className={`text-2xl font-black uppercase tracking-tight truncate ${
-              faultName === 'NORMAL' ? 'text-emerald-600' : 'text-orange-600'
+              !isReady ? 'text-gray-400 opacity-60' : (faultName === 'NORMAL' ? 'text-emerald-600' : 'text-orange-600')
             }`}>
               {faultName}
             </h2>
-            <p className="text-xs text-gray-500 mt-1">{diagnosis?.fault_component || 'All Systems Nominal'}</p>
+            <p className="text-xs text-gray-500 mt-1">
+              {isReady
+                ? (diagnosis?.fault_component || 'All Systems Nominal')
+                : isCollecting
+                ? 'Buffering 32 temporal frames...'
+                : 'Virtual Engine not synchronized'}
+            </p>
           </div>
         </div>
 
@@ -111,13 +143,15 @@ const FaultSimulation = () => {
           <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider block">SEVERITY LEVEL</span>
           <div className="mt-2">
             <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-black uppercase tracking-wider ${
-              severity === 'CRITICAL'
+              !isReady
+                ? 'bg-gray-100 text-gray-400 border border-gray-200'
+                : severity === 'CRITICAL'
                 ? 'bg-red-100 text-red-700 border border-red-200'
                 : (severity === 'MEDIUM' ? 'bg-amber-100 text-amber-700 border border-amber-200' : 'bg-emerald-100 text-emerald-700 border border-emerald-200')
             }`}>
-              {severity === 'CRITICAL' && <AlertOctagon size={14} />}
-              {severity === 'MEDIUM' && <AlertTriangle size={14} />}
-              {severity === 'LOW' && <CheckCircle2 size={14} />}
+              {isReady && severity === 'CRITICAL' && <AlertOctagon size={14} />}
+              {isReady && severity === 'MEDIUM' && <AlertTriangle size={14} />}
+              {isReady && severity === 'LOW' && <CheckCircle2 size={14} />}
               {severity}
             </span>
             <p className="text-xs text-gray-500 mt-2">Flight envelope risk assessment</p>
@@ -129,8 +163,8 @@ const FaultSimulation = () => {
           <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider block">MODEL CONFIDENCE</span>
           <div className="mt-2">
             <div className="flex items-baseline gap-1">
-              <span className="text-3xl font-black text-gray-900 tracking-tight font-mono">
-                {confidence !== null ? `${confidence}%` : '--'}
+              <span className={`text-3xl font-black tracking-tight font-mono ${confidence !== null ? 'text-gray-900' : 'text-gray-400 opacity-60'}`}>
+                {confidence !== null ? `${confidence}%` : '—'}
               </span>
             </div>
             <p className="text-xs text-gray-500 mt-1">1D ResNet multi-class posterior probability</p>
@@ -142,10 +176,10 @@ const FaultSimulation = () => {
           <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider block">ANOMALY SCORE</span>
           <div className="mt-2">
             <div className="flex items-baseline gap-1">
-              <span className="text-3xl font-black text-gray-900 tracking-tight font-mono">
-                {anomalyScore !== null ? anomalyScore : '--'}
+              <span className={`text-3xl font-black tracking-tight font-mono ${anomalyScore !== null ? 'text-gray-900' : 'text-gray-400 opacity-60'}`}>
+                {anomalyScore !== null ? anomalyScore : '—'}
               </span>
-              <span className="text-xs font-bold text-gray-400">/ 100</span>
+              {anomalyScore !== null && <span className="text-xs font-bold text-gray-400">/ 100</span>}
             </div>
             <p className="text-xs text-gray-500 mt-1">Autoencoder reconstruction divergence</p>
           </div>
@@ -207,9 +241,27 @@ const FaultSimulation = () => {
             </div>
           ) : (
             <div className="py-10 text-center text-gray-400">
-              <CheckCircle2 size={36} className="mx-auto text-emerald-500 mb-2" />
-              <p className="text-sm font-bold text-gray-700">All 10 Primary Sensors Within Normal Physical Equilibrium</p>
-              <p className="text-xs text-gray-400 mt-0.5">Zero significant deviations detected across lubrication, combustion, and vibration subsystems.</p>
+              {isReady ? (
+                <>
+                  <CheckCircle2 size={36} className="mx-auto text-emerald-500 mb-2" />
+                  <p className="text-sm font-bold text-gray-700">All 10 Primary Sensors Within Normal Physical Equilibrium</p>
+                  <p className="text-xs text-gray-400 mt-0.5">Zero significant deviations detected across lubrication, combustion, and vibration subsystems.</p>
+                </>
+              ) : isCollecting ? (
+                <>
+                  <div className="w-8 h-8 mx-auto mb-2 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                  <p className="text-sm font-bold text-gray-700">Collecting Temporal Window ({windowSamples} / {windowRequired} frames)</p>
+                  <p className="text-xs text-gray-400 mt-0.5">AI multi-sensor symptom mapping requires a 32-sample window before differential analysis.</p>
+                </>
+              ) : (
+                <>
+                  <div className="w-9 h-9 mx-auto mb-2 rounded-full bg-gray-100 flex items-center justify-center text-gray-400">
+                    <Activity size={20} />
+                  </div>
+                  <p className="text-sm font-bold text-gray-600">Waiting for Synchronized Virtual Engine Telemetry</p>
+                  <p className="text-xs text-gray-400 mt-0.5">Sensor deviations cannot be fabricated while offline or uninitialized.</p>
+                </>
+              )}
             </div>
           )}
 
@@ -219,9 +271,17 @@ const FaultSimulation = () => {
               PHYSICAL EVIDENCE EXPLANATION:
             </span>
             <ul className="list-disc list-inside space-y-1 text-xs text-gray-600">
-              {diagnosis?.reasoning?.map((r, i) => (
-                <li key={i}>{r}</li>
-              )) || <li>All telemetry parameters track nominal physical equilibrium.</li>}
+              {!isSynchronized ? (
+                <li>Waiting for synchronized Virtual Engine telemetry.</li>
+              ) : isCollecting ? (
+                <li>Collecting temporal telemetry window ({windowSamples} of {windowRequired} samples) for deep learning analysis.</li>
+              ) : diagnosis?.reasoning?.length ? (
+                diagnosis.reasoning.map((r, i) => (
+                  <li key={i}>{r}</li>
+                ))
+              ) : (
+                <li>All telemetry parameters track nominal physical equilibrium.</li>
+              )}
             </ul>
           </div>
         </div>
@@ -233,8 +293,16 @@ const FaultSimulation = () => {
             <h2 className="text-sm font-black text-gray-900 uppercase tracking-tight mb-2">
               RECOMMENDED OPERATIONAL ACTION
             </h2>
-            <div className="p-4 rounded-xl bg-orange-50/60 border border-orange-200 text-xs text-orange-950 font-medium leading-relaxed">
-              {diagnosis?.recommended_action || 'Continue mission profile. All parameters nominal.'}
+            <div className={`p-4 rounded-xl border text-xs font-medium leading-relaxed ${
+              !isReady
+                ? 'bg-gray-50 border-gray-200 text-gray-500'
+                : 'bg-orange-50/60 border-orange-200 text-orange-950'
+            }`}>
+              {!isSynchronized
+                ? 'Telemetry stream inactive. Connect Virtual Engine to generate operational advisories.'
+                : isCollecting
+                ? `Acquiring time-series window (${windowSamples}/${windowRequired} frames) before generating flight advisories.`
+                : (diagnosis?.recommended_action || 'Continue mission profile. All parameters nominal.')}
             </div>
           </div>
 
