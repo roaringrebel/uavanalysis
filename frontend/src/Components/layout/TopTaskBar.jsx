@@ -4,6 +4,8 @@ import { useEngineStore, formatSensorValue, isSensorAvailable } from '../../stor
 import TelemetrySyncModal from './TelemetrySyncModal';
 
 const TopTaskBar = () => {
+  const telemetryStatus = useEngineStore((s) => s.telemetryStatus);
+  const telemetryReady = useEngineStore((s) => s.telemetryReady);
   const syncState = useEngineStore((s) => s.syncState);
   const dataSource = useEngineStore((s) => s.dataSource);
   const streamConnected = useEngineStore((s) => s.streamConnected);
@@ -25,13 +27,15 @@ const TopTaskBar = () => {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [syncModalOpen, setSyncModalOpen] = useState(false);
 
-  const isSynchronized = syncState === 'SYNCHRONIZED';
-  const flightPhase = flightContext?.flight_phase || '—';
-  const isAnomaly = modelReady && diagnosis?.anomaly_detected;
-  const faultName = modelReady && diagnosis?.fault_type && diagnosis.fault_type !== '—' ? diagnosis.fault_type : '—';
-  const isCritical = modelReady && diagnosis?.status === 'Critical';
+  const isSynchronized = telemetryReady && telemetryStatus === 'LIVE';
+  const flightPhase = telemetryReady ? (flightContext?.flight_phase || 'STANDBY') : 'STANDBY';
+  const isAnomaly = telemetryReady && modelReady && diagnosis?.anomaly_detected;
+  const faultName = telemetryReady && modelReady && diagnosis?.fault_type && diagnosis.fault_type !== '—'
+    ? diagnosis.fault_type
+    : (telemetryReady ? 'ANALYZING' : 'AWAITING TELEMETRY');
+  const isCritical = telemetryReady && modelReady && diagnosis?.status === 'Critical';
 
-  // Render authoritative status badge
+  // Render authoritative status badge (Requirement 15)
   const renderStatusBadge = () => {
     if (dataSource === 'demo_simulation') {
       return (
@@ -46,81 +50,66 @@ const TopTaskBar = () => {
       );
     }
 
-    switch (syncState) {
-      case 'SYNCHRONIZED':
-        return (
-          <button
-            onClick={() => setSyncModalOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black tracking-tight border bg-emerald-50 text-emerald-800 border-emerald-300 shadow-xs cursor-pointer hover:opacity-95"
-            title="Authoritative Virtual Engine telemetry synchronized"
-          >
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span>● VIRTUAL ENGINE SYNCHRONIZED</span>
-          </button>
-        );
-      case 'CONNECTING':
-        return (
-          <button
-            onClick={() => setSyncModalOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold tracking-tight border bg-sky-50 text-sky-800 border-sky-300 shadow-xs cursor-pointer"
-          >
-            <span className="w-2 h-2 rounded-full bg-sky-500 animate-ping" />
-            <span>◌ VIRTUAL ENGINE CONNECTING...</span>
-          </button>
-        );
-      case 'RECONNECTING':
-        return (
-          <button
-            onClick={() => setSyncModalOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold tracking-tight border bg-amber-50 text-amber-800 border-amber-300 shadow-xs cursor-pointer"
-          >
-            <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-            <span>◌ VIRTUAL ENGINE RECONNECTING...</span>
-          </button>
-        );
-      case 'STALE':
-        return (
-          <button
-            onClick={() => setSyncModalOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold tracking-tight border bg-amber-50 text-amber-800 border-amber-300 shadow-xs cursor-pointer"
-          >
-            <span className="w-2 h-2 rounded-full bg-amber-500" />
-            <span>○ VIRTUAL ENGINE STALE</span>
-          </button>
-        );
-      case 'DISCONNECTED':
-        return (
-          <button
-            onClick={() => setSyncModalOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold tracking-tight border bg-slate-100 text-slate-600 border-slate-300 shadow-xs cursor-pointer"
-          >
-            <span className="w-2 h-2 rounded-full bg-slate-400" />
-            <span>○ VIRTUAL ENGINE CONNECTION LOST</span>
-          </button>
-        );
-      case 'ERROR':
-        return (
-          <button
-            onClick={() => setSyncModalOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold tracking-tight border bg-red-50 text-red-700 border-red-200 shadow-xs cursor-pointer"
-          >
-            <span className="w-2 h-2 rounded-full bg-red-500" />
-            <span>⚠ VIRTUAL ENGINE ERROR</span>
-          </button>
-        );
-      case 'OFFLINE':
-      default:
-        return (
-          <button
-            onClick={() => setSyncModalOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold tracking-tight border bg-slate-100 text-slate-600 border-slate-300 shadow-xs cursor-pointer"
-            title="Virtual Engine is not connected. Telemetry values will display as —"
-          >
-            <span className="w-2 h-2 rounded-full bg-slate-400" />
-            <span>○ VIRTUAL ENGINE NOT CONNECTED</span>
-          </button>
-        );
+    if (telemetryReady && telemetryStatus === 'LIVE') {
+      return (
+        <button
+          onClick={() => setSyncModalOpen(true)}
+          className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black tracking-tight border bg-emerald-50 text-emerald-800 border-emerald-300 shadow-xs cursor-pointer hover:opacity-95"
+          title="Authoritative Virtual Engine telemetry synchronized"
+        >
+          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+          <span>● VIRTUAL ENGINE SYNCHRONIZED</span>
+        </button>
+      );
     }
+
+    if (telemetryStatus === 'CONNECTING') {
+      return (
+        <button
+          onClick={() => setSyncModalOpen(true)}
+          className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold tracking-tight border bg-sky-50 text-sky-800 border-sky-300 shadow-xs cursor-pointer"
+        >
+          <span className="text-sky-600 font-mono">◐</span>
+          <span>◐ SYNCHRONIZING</span>
+        </button>
+      );
+    }
+
+    if (telemetryStatus === 'STALE') {
+      return (
+        <button
+          onClick={() => setSyncModalOpen(true)}
+          className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold tracking-tight border bg-amber-50 text-amber-800 border-amber-300 shadow-xs cursor-pointer"
+        >
+          <span className="text-amber-600 font-black">⚠</span>
+          <span>⚠ TELEMETRY STALE</span>
+        </button>
+      );
+    }
+
+    if (telemetryStatus === 'LOST') {
+      return (
+        <button
+          onClick={() => setSyncModalOpen(true)}
+          className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold tracking-tight border bg-red-50 text-red-700 border-red-200 shadow-xs cursor-pointer"
+        >
+          <span className="text-red-500 font-black">✕</span>
+          <span>✕ TELEMETRY LOST</span>
+        </button>
+      );
+    }
+
+    // WAITING FOR VIRTUAL ENGINE (Default standby before first packet)
+    return (
+      <button
+        onClick={() => setSyncModalOpen(true)}
+        className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold tracking-tight border bg-slate-100 text-slate-600 border-slate-300 shadow-xs cursor-pointer"
+        title="Virtual Engine is not transmitting telemetry. System in standby."
+      >
+        <span className="w-2 h-2 rounded-full bg-slate-400" />
+        <span>○ WAITING FOR VIRTUAL ENGINE</span>
+      </button>
+    );
   };
 
   return (
@@ -169,17 +158,17 @@ const TopTaskBar = () => {
 
             {/* AI Window Readiness (Requirement 8) */}
             <div className={`flex items-center gap-1 px-2.5 py-1 rounded-lg border text-[11px] font-bold shadow-2xs ${
-              modelReady
+              telemetryReady && modelReady
                 ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
-                : (windowSamples > 0
+                : (telemetryReady && windowSamples > 0
                   ? 'bg-sky-50 text-sky-800 border-sky-300'
                   : 'bg-slate-50 text-slate-400 border-slate-200')
             }`}>
-              <Cpu size={11} className={modelReady ? 'text-emerald-600' : (windowSamples > 0 ? 'text-sky-600' : 'text-slate-400')} />
+              <Cpu size={11} className={telemetryReady && modelReady ? 'text-emerald-600' : (telemetryReady && windowSamples > 0 ? 'text-sky-600' : 'text-slate-400')} />
               <span>
-                {modelReady
+                {telemetryReady && modelReady
                   ? '● AI READY'
-                  : (windowSamples > 0 ? `AI: ${windowSamples} / 32 SAMPLES` : 'AI: WAITING')}
+                  : (telemetryReady && windowSamples > 0 ? `AI: ${windowSamples} / 32 SAMPLES` : 'AI: WAITING')}
               </span>
             </div>
 

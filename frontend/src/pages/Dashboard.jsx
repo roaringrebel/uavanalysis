@@ -9,6 +9,8 @@ import { useEngineStore, SENSOR_CONFIG_10, formatSensorValue, isSensorAvailable 
 import MiniSparkline from '../Components/common/MiniSparkline';
 
 const Dashboard = () => {
+  const telemetryStatus = useEngineStore((s) => s.telemetryStatus);
+  const telemetryReady = useEngineStore((s) => s.telemetryReady);
   const syncState = useEngineStore((s) => s.syncState);
   const dataSource = useEngineStore((s) => s.dataSource);
   const engineTelemetry = useEngineStore((s) => s.engineTelemetry);
@@ -25,7 +27,7 @@ const Dashboard = () => {
   const windowSamples = useEngineStore((s) => s.windowSamples);
   const modelReady = useEngineStore((s) => s.modelReady);
 
-  const isSynchronized = syncState === 'SYNCHRONIZED';
+  const isSynchronized = telemetryReady && telemetryStatus === 'LIVE';
   const hasLiveTelemetry = isSynchronized && engineTelemetry !== null;
 
   // AI & Prognostic model values (available ONLY after valid 32-sample window)
@@ -35,28 +37,20 @@ const Dashboard = () => {
   const anomalyScore = hasLiveTelemetry && modelReady && soh?.anomalyScore != null ? soh.anomalyScore : null;
   const faultName = hasLiveTelemetry && modelReady && diagnosis?.fault_type && diagnosis.fault_type !== '—'
     ? diagnosis.fault_type
-    : (windowSamples > 0 && !modelReady ? `COLLECTING (${windowSamples}/32)` : '—');
+    : (telemetryReady && windowSamples > 0 && !modelReady ? `COLLECTING (${windowSamples}/32)` : 'AWAITING TELEMETRY');
   const missionDecision = hasLiveTelemetry && modelReady && finalDecision !== '—' ? finalDecision : '—';
 
-  // Status header presentation
+  // Status header presentation (Requirement 15)
   const getStatusText = () => {
     if (dataSource === 'demo_simulation') return 'DEMO SIMULATION ACTIVE · NOT LIVE TELEMETRY';
-    switch (syncState) {
-      case 'SYNCHRONIZED':
-        return 'LIVE · SYNCHRONIZED WITH VIRTUAL ENGINE';
-      case 'CONNECTING':
-        return 'CONNECTING TO VIRTUAL ENGINE...';
-      case 'RECONNECTING':
-        return 'RECONNECTING TO VIRTUAL ENGINE...';
-      case 'STALE':
-        return `STALE TELEMETRY (LAST RECEIVED: ${lastPacketTime || '—'})`;
-      case 'DISCONNECTED':
-        return `CONNECTION LOST (LAST KNOWN: ${lastKnownTimestamp || '—'})`;
-      case 'OFFLINE':
-      default:
-        return 'NOT CONNECTED · AWAITING SYNCHRONIZATION';
-    }
+    if (telemetryReady && telemetryStatus === 'LIVE') return 'LIVE · SYNCHRONIZED WITH VIRTUAL ENGINE';
+    if (telemetryStatus === 'CONNECTING') return '◐ SYNCHRONIZING WITH VIRTUAL ENGINE...';
+    if (telemetryStatus === 'STALE') return `⚠ TELEMETRY STALE (LAST RECEIVED: ${lastPacketTime || '—'})`;
+    if (telemetryStatus === 'LOST') return `✕ TELEMETRY LOST (LAST KNOWN: ${lastKnownTimestamp || '—'})`;
+    return '○ WAITING FOR VIRTUAL ENGINE';
   };
+
+  const flightPhase = telemetryReady ? (flightContext?.flight_phase || 'STANDBY') : 'STANDBY';
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] p-4 lg:p-7 flex flex-col gap-6 max-w-[1780px] mx-auto select-none font-sans text-[#1F2937]">
@@ -83,12 +77,12 @@ const Dashboard = () => {
             <span className={`inline-flex items-center gap-1.5 font-bold ${
               isSynchronized
                 ? 'text-emerald-700'
-                : (isStale ? 'text-amber-700' : 'text-slate-500')
+                : (isStale ? 'text-amber-700' : (telemetryStatus === 'LOST' ? 'text-red-700' : 'text-slate-500'))
             }`}>
               <span className={`w-2 h-2 rounded-full ${
                 isSynchronized
                   ? 'bg-emerald-500 animate-pulse'
-                  : (isStale ? 'bg-amber-500' : 'bg-slate-400')
+                  : (isStale ? 'bg-amber-500' : (telemetryStatus === 'LOST' ? 'bg-red-500' : 'bg-slate-400'))
               }`} />
               {getStatusText()}
             </span>
@@ -98,7 +92,7 @@ const Dashboard = () => {
         {/* Operating Context Pill */}
         <div className="flex items-center gap-2.5">
           <div className="px-3 py-1.5 rounded-xl bg-slate-100 border border-slate-200 text-xs font-bold text-slate-700">
-            PHASE: <span className="text-orange-600 font-black">{flightContext?.flight_phase || '—'}</span>
+            PHASE: <span className="text-orange-600 font-black">{flightPhase}</span>
           </div>
           <Link
             to="/live-engine"
@@ -116,11 +110,11 @@ const Dashboard = () => {
             OVERALL ENGINE HEALTH & PROGNOSTICS
           </h2>
           <span className="text-[11px] text-gray-400 font-medium">
-            {modelReady
+            {telemetryReady && modelReady
               ? '● AI Diagnostic Core Active (32/32 Window)'
-              : (windowSamples > 0
+              : (telemetryReady && windowSamples > 0
                 ? `◌ Collecting Time-Series Window (${windowSamples}/32)`
-                : '○ Waiting for Synchronized Telemetry')}
+                : '○ Waiting for Telemetry (0/32)')}
           </span>
         </div>
 
@@ -149,13 +143,13 @@ const Dashboard = () => {
               <p className="text-xs text-gray-400 mt-1">
                 {healthScore !== null
                   ? (healthScore > 85 ? 'Optimal wear index' : 'Elevated degradation')
-                  : (!isSynchronized ? 'Waiting for telemetry' : `Collecting window (${windowSamples}/32)`)}
+                  : (!telemetryReady ? 'Awaiting telemetry' : `Collecting window (${windowSamples}/32)`)}
               </p>
             </div>
             <div className="mt-3 pt-2 border-t border-gray-100 flex items-center gap-1.5 text-[10px] font-bold">
               <span className={`w-1.5 h-1.5 rounded-full ${healthScore !== null ? 'bg-emerald-500' : 'bg-gray-400'}`} />
               <span className={healthScore !== null ? 'text-emerald-700' : 'text-gray-400'}>
-                {healthScore !== null ? '● LIVE' : '○ NOT AVAILABLE'}
+                {healthScore !== null ? '● AVAILABLE' : (!telemetryReady ? '○ AWAITING TELEMETRY' : `◌ COLLECTING (${windowSamples}/32)`)}
               </span>
             </div>
           </div>
@@ -184,13 +178,13 @@ const Dashboard = () => {
               <p className="text-xs text-gray-400 mt-1">
                 {rulHours !== null
                   ? 'Dynamic prognostic estimate'
-                  : (!isSynchronized ? 'Waiting for telemetry' : `Collecting window (${windowSamples}/32)`)}
+                  : (!telemetryReady ? 'Awaiting telemetry' : `Collecting window (${windowSamples}/32)`)}
               </p>
             </div>
             <div className="mt-3 pt-2 border-t border-gray-100 flex items-center gap-1.5 text-[10px] font-bold">
               <span className={`w-1.5 h-1.5 rounded-full ${rulHours !== null ? 'bg-emerald-500' : 'bg-gray-400'}`} />
               <span className={rulHours !== null ? 'text-emerald-700' : 'text-gray-400'}>
-                {rulHours !== null ? '● LIVE' : '○ NOT AVAILABLE'}
+                {rulHours !== null ? '● AVAILABLE' : (!telemetryReady ? '○ AWAITING TELEMETRY' : `◌ COLLECTING (${windowSamples}/32)`)}
               </span>
             </div>
           </div>
@@ -223,25 +217,25 @@ const Dashboard = () => {
               <p className="text-xs text-gray-400 mt-1">
                 {anomalyScore !== null
                   ? (anomalyScore > 35 ? 'Reconstruction anomaly flagged' : 'Nominal physical bounds')
-                  : (!isSynchronized ? 'Waiting for telemetry' : `Collecting window (${windowSamples}/32)`)}
+                  : (!telemetryReady ? 'Awaiting telemetry' : `Collecting window (${windowSamples}/32)`)}
               </p>
             </div>
             <div className="mt-3 pt-2 border-t border-gray-100 flex items-center gap-1.5 text-[10px] font-bold">
               <span className={`w-1.5 h-1.5 rounded-full ${anomalyScore !== null ? 'bg-emerald-500' : 'bg-gray-400'}`} />
               <span className={anomalyScore !== null ? 'text-emerald-700' : 'text-gray-400'}>
-                {anomalyScore !== null ? '● LIVE' : '○ NOT AVAILABLE'}
+                {anomalyScore !== null ? '● AVAILABLE' : (!telemetryReady ? '○ AWAITING TELEMETRY' : `◌ COLLECTING (${windowSamples}/32)`)}
               </span>
             </div>
           </div>
 
           {/* Fault Category Card */}
           <div className={`bg-white border rounded-2xl p-5 shadow-xs flex flex-col justify-between transition-all ${
-            faultName !== '—' ? 'border-gray-200/80' : 'border-gray-200/60 opacity-80'
+            faultName !== '—' && faultName !== 'AWAITING TELEMETRY' ? 'border-gray-200/80' : 'border-gray-200/60 opacity-80'
           }`}>
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">DIAGNOSED FAULT</span>
               <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${
-                faultName !== '—' ? 'bg-orange-50 text-orange-600' : 'bg-gray-100 text-gray-400'
+                faultName !== '—' && faultName !== 'AWAITING TELEMETRY' ? 'bg-orange-50 text-orange-600' : 'bg-gray-100 text-gray-400'
               }`}>
                 <Cpu size={16} strokeWidth={2.4} />
               </div>
@@ -250,20 +244,20 @@ const Dashboard = () => {
               <span className={`text-base font-black tracking-tight block truncate uppercase ${
                 faultName === 'NORMAL'
                   ? 'text-emerald-700'
-                  : (faultName !== '—' ? 'text-orange-700' : 'text-gray-400')
+                  : (faultName !== '—' && faultName !== 'AWAITING TELEMETRY' ? 'text-orange-700' : 'text-gray-400')
               }`}>
                 {faultName}
               </span>
               <p className="text-xs text-gray-400 mt-1">
                 {modelReady && diagnosis?.confidence
                   ? `Confidence: ${Math.round(diagnosis.confidence * 100)}%`
-                  : (!isSynchronized ? 'Waiting for telemetry' : `Window: ${windowSamples}/32`)}
+                  : (!telemetryReady ? 'Awaiting telemetry' : `Window: ${windowSamples}/32`)}
               </p>
             </div>
             <div className="mt-3 pt-2 border-t border-gray-100 flex items-center gap-1.5 text-[10px] font-bold">
-              <span className={`w-1.5 h-1.5 rounded-full ${faultName !== '—' ? 'bg-emerald-500' : 'bg-gray-400'}`} />
-              <span className={faultName !== '—' ? 'text-emerald-700' : 'text-gray-400'}>
-                {faultName !== '—' ? '● LIVE' : '○ NOT AVAILABLE'}
+              <span className={`w-1.5 h-1.5 rounded-full ${modelReady && faultName !== 'AWAITING TELEMETRY' ? 'bg-emerald-500' : 'bg-gray-400'}`} />
+              <span className={modelReady && faultName !== 'AWAITING TELEMETRY' ? 'text-emerald-700' : 'text-gray-400'}>
+                {modelReady && faultName !== 'AWAITING TELEMETRY' ? '● AVAILABLE' : (!telemetryReady ? '○ AWAITING TELEMETRY' : '◌ ANALYZING')}
               </span>
             </div>
           </div>
@@ -301,7 +295,7 @@ const Dashboard = () => {
             <div className="mt-3 pt-2 border-t border-gray-100 flex items-center gap-1.5 text-[10px] font-bold">
               <span className={`w-1.5 h-1.5 rounded-full ${missionDecision !== '—' ? 'bg-emerald-500' : 'bg-gray-400'}`} />
               <span className={missionDecision !== '—' ? 'text-emerald-700' : 'text-gray-400'}>
-                {missionDecision !== '—' ? '● LIVE' : '○ NOT AVAILABLE'}
+                {missionDecision !== '—' ? '● AVAILABLE' : '○ AWAITING TELEMETRY'}
               </span>
             </div>
           </div>
@@ -366,7 +360,7 @@ const Dashboard = () => {
                 <div className="mt-3 pt-2.5 border-t border-gray-100 flex items-center justify-between text-[11px]">
                   <span className="text-gray-400 font-medium">Expected:</span>
                   <span className="font-mono text-gray-500 font-bold">
-                    {formatSensorValue(dev?.expected, s.decimals)} {s.unit}
+                    {dev?.expected != null ? `${formatSensorValue(dev.expected, s.decimals)} ${s.unit}` : '—'}
                   </span>
                 </div>
 
@@ -376,7 +370,7 @@ const Dashboard = () => {
                     isAvail ? 'bg-emerald-500' : (isStale ? 'bg-amber-400' : 'bg-gray-400')
                   }`} />
                   <span className={isAvail ? 'text-emerald-700' : (isStale ? 'text-amber-700' : 'text-gray-400')}>
-                    {isAvail ? '● LIVE' : (isStale ? '○ STALE' : '○ NOT AVAILABLE')}
+                    {isAvail ? '● LIVE' : (isStale ? '⚠ STALE' : '○ NOT AVAILABLE')}
                   </span>
                 </div>
               </div>

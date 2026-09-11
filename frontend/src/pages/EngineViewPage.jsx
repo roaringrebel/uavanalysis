@@ -18,16 +18,16 @@ const EngineViewPage = () => {
   const history = useEngineStore((s) => s.history);
   const digitalTwinDeviations = useEngineStore((s) => s.digitalTwinDeviations);
 
-  const rawRpm = isSynchronized && isSensorAvailable('rpm') && engineTelemetry?.engine_rpm != null ? Number(engineTelemetry.engine_rpm) : null;
+  const rawRpm = isSynchronized && engineTelemetry?.engine_rpm != null ? Number(engineTelemetry.engine_rpm) : null;
   const isRunning = rawRpm != null && rawRpm > 500;
-  const engineStatus = isSynchronized ? (isRunning ? 'RUNNING' : 'STANDBY') : 'NOT SYNCHRONIZED';
+  const engineStatus = isSynchronized ? (isRunning ? 'RUNNING' : 'STANDBY') : 'AWAITING TELEMETRY';
 
-  const baseCht = isSynchronized && isSensorAvailable('cht') && engineTelemetry?.cht != null ? Number(engineTelemetry.cht) : null;
-  const vibRms = isSynchronized && isSensorAvailable('vibration') && engineTelemetry?.vibration_rms != null ? engineTelemetry.vibration_rms : null;
-  const vibPeak = isSynchronized && isSensorAvailable('vibration') && engineTelemetry?.vibration_peak != null ? engineTelemetry.vibration_peak : null;
-  const crestFactor = isSynchronized && isSensorAvailable('vibration') && engineTelemetry?.crest_factor != null ? engineTelemetry.crest_factor : null;
-  const domFreq = isSynchronized && isSensorAvailable('vibration') && engineTelemetry?.dominant_frequency_hz != null ? engineTelemetry.dominant_frequency_hz : null;
-  const specEnergy = isSynchronized && isSensorAvailable('vibration') && engineTelemetry?.spectral_energy != null ? engineTelemetry.spectral_energy : null;
+  const baseCht = isSynchronized && engineTelemetry?.cht != null ? Number(engineTelemetry.cht) : null;
+  const vibRms = isSynchronized && engineTelemetry?.vibration_rms != null ? engineTelemetry.vibration_rms : null;
+  const vibPeak = isSynchronized && engineTelemetry?.vibration_peak != null ? engineTelemetry.vibration_peak : null;
+  const crestFactor = isSynchronized && engineTelemetry?.crest_factor != null ? engineTelemetry.crest_factor : null;
+  const domFreq = isSynchronized && engineTelemetry?.dominant_frequency_hz != null ? engineTelemetry.dominant_frequency_hz : null;
+  const specEnergy = isSynchronized && engineTelemetry?.spectral_energy != null ? engineTelemetry.spectral_energy : null;
   const peakToPeak = vibPeak !== null ? Number((vibPeak * 1.9).toFixed(3)) : null;
 
   return (

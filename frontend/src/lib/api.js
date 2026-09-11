@@ -1,6 +1,6 @@
 // AeroTwin — Central API utility with self-contained local diagnostic engine and DL backend integration
 
-const BACKEND_URL = import.meta.env.VITE_API_URL ||
+const BACKEND_URL = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) ||
   (typeof window !== 'undefined' && window.location.hostname.includes('vercel.app') ? '' : 'http://localhost:3000');
 
 const NOMINAL = {
@@ -62,27 +62,29 @@ function computeFailureProb(reliability, confidence) {
 
 export function normalizeTelemetry(t) {
   if (!t) return null;
-  const rawOilP = t.oil_pressure ?? 0;
-  const oil_pressure_bar = rawOilP > 25 ? rawOilP / 100 : rawOilP;
-  const oil_pressure = rawOilP > 25 ? rawOilP : rawOilP * 100;
-  const rpm = Number(t.engine_rpm ?? t.rpm ?? 0);
-  const isEngineOn = Boolean(t.engine_on ?? (rpm > 100));
+  const rawOilP = t.oil_pressure;
+  const oil_pressure_bar = rawOilP != null ? (rawOilP > 25 ? rawOilP / 100 : rawOilP) : null;
+  const oil_pressure = rawOilP != null ? (rawOilP > 25 ? rawOilP : rawOilP * 100) : null;
+  const rpm = (t.engine_rpm ?? t.rpm) != null ? Number(t.engine_rpm ?? t.rpm) : null;
+  const isEngineOn = Boolean(t.engine_on ?? (rpm != null && rpm > 100));
 
   return {
     ...t,
     oil_pressure,
-    oil_pressure_bar: Number(oil_pressure_bar.toFixed(2)),
+    oil_pressure_bar: oil_pressure_bar != null ? Number(oil_pressure_bar.toFixed(2)) : null,
     rpm,
     engine_rpm: rpm,
-    cht: Number(t.cht ?? 94),
-    egt: Number(t.egt ?? 790),
-    oil_temp: Number(t.oil_temperature ?? t.oil_temp ?? 92),
-    fuel_flow: Number(t.fuel_flow ?? 24.5),
-    vibration: Number(t.vibration ?? t.vibration_rms ?? 0.18),
-    vibration_rms: Number(t.vibration_rms ?? t.vibration ?? 0.18),
-    engine_load: Number(t.engine_load ?? t.engineLoad ?? 72),
+    cht: t.cht != null ? Number(t.cht) : null,
+    egt: t.egt != null ? Number(t.egt) : null,
+    oil_temp: (t.oil_temperature ?? t.oil_temp) != null ? Number(t.oil_temperature ?? t.oil_temp) : null,
+    fuel_flow: t.fuel_flow != null ? Number(t.fuel_flow) : null,
+    fuel_pressure: t.fuel_pressure != null ? Number(t.fuel_pressure) : null,
+    map: t.map != null ? Number(t.map) : null,
+    vibration: (t.vibration_rms ?? t.vibration) != null ? Number(t.vibration_rms ?? t.vibration) : null,
+    vibration_rms: (t.vibration_rms ?? t.vibration) != null ? Number(t.vibration_rms ?? t.vibration) : null,
+    engine_load: (t.engine_load ?? t.engineLoad) != null ? Number(t.engine_load ?? t.engineLoad) : null,
     engine_on: isEngineOn,
-    flight_phase: (t.flight_phase || 'CRUISE').toUpperCase()
+    flight_phase: (t.flight_phase || 'STANDBY').toUpperCase()
   };
 }
 
@@ -337,25 +339,18 @@ export async function resetStream() {
 }
 
 export async function fetchVercelLiveTelemetry() {
-  const endpoints = [
-    '/api/telemetry',
-    'https://sihaimodel-beta.vercel.app/api/telemetry',
-    'https://sihaimodel.vercel.app/api/telemetry'
-  ];
-  for (const ep of endpoints) {
-    try {
-      const res = await fetch(ep, {
-        signal: AbortSignal.timeout(2000),
-        cache: 'no-store'
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data && (data.stream_active || data.telemetry)) {
-          return data;
-        }
+  try {
+    const res = await fetch('/api/telemetry', {
+      signal: AbortSignal.timeout(2000),
+      cache: 'no-store'
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.stream_active && data.telemetry) {
+        return data;
       }
-    } catch (_) {}
-  }
+    }
+  } catch (_) {}
   return null;
 }
 

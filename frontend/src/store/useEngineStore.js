@@ -3,7 +3,7 @@ import {
   diagnose, getWsUrl, localDiagnose, NOMINAL, normalizeTelemetry,
   ingestTelemetry, getStreamStatus, testExternalConnection,
   configurePullStream, resetStream, fetchVercelLiveTelemetry, BACKEND_URL
-} from '../lib/api';
+} from '../lib/api.js';
 
 // ─── CANONICAL 10 PRIMARY ENGINE PARAMETERS (Website 1 Standard) ─────────────
 export const SENSOR_CONFIG_10 = [
@@ -324,18 +324,109 @@ function buildMaintenanceRecs(diag, soh, deviations) {
 }
 
 // ─── Initial Standby State (Zero Dummy Values) ──────────────────────────────
+export function validateTelemetryPacket(data) {
+  if (!data || typeof data !== 'object') return null;
+  const raw = data.engine_telemetry || data.telemetry || data;
+  if (!raw || typeof raw !== 'object') return null;
+
+  // Validate required telemetry fields from Website 1
+  const timestamp = raw.timestamp || data.timestamp;
+  const uav_id = raw.uav_id || data.uav_id || 'UAV-001';
+  const engine_id = raw.engine_id || data.engine_id || 'ENG-001';
+  const sequence = raw.sequence ?? raw.sequence_number ?? data.sequence ?? data.sequence_number;
+
+  const rpm = raw.rpm ?? raw.engine_rpm;
+  const engine_load = raw.engine_load ?? raw.engineLoad;
+  const vibration_rms = raw.vibration_rms ?? raw.vibration_rms_g ?? raw.vibration;
+  const cht = raw.cht;
+  const egt = raw.egt;
+  const oil_pressure = raw.oil_pressure;
+  const oil_temperature = raw.oil_temperature ?? raw.oil_temp;
+  const fuel_flow = raw.fuel_flow;
+  const fuel_pressure = raw.fuel_pressure;
+  const map = raw.map;
+  const flight_phase = raw.flight_phase || data.flight_phase || data.flight_context?.flight_phase;
+
+  // Strict check: essential physical parameters must exist and be valid numbers
+  if (
+    timestamp == null ||
+    rpm == null || isNaN(Number(rpm)) ||
+    engine_load == null || isNaN(Number(engine_load)) ||
+    vibration_rms == null || isNaN(Number(vibration_rms)) ||
+    cht == null || isNaN(Number(cht)) ||
+    egt == null || isNaN(Number(egt)) ||
+    oil_pressure == null || isNaN(Number(oil_pressure)) ||
+    oil_temperature == null || isNaN(Number(oil_temperature)) ||
+    fuel_flow == null || isNaN(Number(fuel_flow)) ||
+    fuel_pressure == null || isNaN(Number(fuel_pressure)) ||
+    map == null || isNaN(Number(map))
+  ) {
+    return null;
+  }
+
+  const engine_rpm = Math.round(Number(rpm));
+  const rawOilP = Number(oil_pressure);
+  const oilP = rawOilP > 15.0 ? Number((rawOilP / 100.0).toFixed(2)) : Number(rawOilP.toFixed(2));
+  const vibRms = Number(Number(vibration_rms).toFixed(3));
+  const isEngineOn = Boolean(raw.engine_on ?? (engine_rpm > 100));
+
+  return {
+    uav_id,
+    engine_id,
+    timestamp: String(timestamp),
+    sequence: sequence != null ? Number(sequence) : null,
+    engine_rpm,
+    rpm: engine_rpm,
+    cht: Number(Number(cht).toFixed(1)),
+    egt: Number(Number(egt).toFixed(0)),
+    oil_pressure: oilP,
+    oil_temp: Number(Number(oil_temperature).toFixed(1)),
+    oil_temperature: Number(Number(oil_temperature).toFixed(1)),
+    fuel_flow: Number(Number(fuel_flow).toFixed(1)),
+    fuel_pressure: Number(Number(fuel_pressure).toFixed(2)),
+    map: Number(Number(map).toFixed(1)),
+    vibration_rms: vibRms,
+    vibration: vibRms,
+    engine_load: Math.round(Number(engine_load)),
+    vibration_peak: raw.vibration_peak != null ? Number(Number(raw.vibration_peak).toFixed(3)) : Number((vibRms * 1.414).toFixed(3)),
+    crest_factor: raw.crest_factor != null ? Number(Number(raw.crest_factor).toFixed(2)) : 1.45,
+    dominant_frequency_hz: raw.dominant_frequency_hz != null ? Number(Number(raw.dominant_frequency_hz).toFixed(1)) : (engine_rpm > 100 ? Number((engine_rpm / 60.0).toFixed(1)) : 0),
+    spectral_energy: raw.spectral_energy != null ? Number(Number(raw.spectral_energy).toFixed(4)) : Number((vibRms * vibRms).toFixed(4)),
+    engine_on: isEngineOn,
+    flight_phase: (flight_phase || 'STANDBY').toUpperCase(),
+    throttle: raw.throttle != null ? Number(raw.throttle) : (data.flight_context?.throttle ?? (engine_rpm > 100 ? 75 : 0)),
+    altitude: raw.altitude != null ? Number(raw.altitude) : (data.flight_context?.altitude ?? (engine_rpm > 100 ? 1500 : 0)),
+    true_airspeed: raw.true_airspeed != null ? Number(raw.true_airspeed) : (data.flight_context?.true_airspeed ?? (engine_rpm > 100 ? 120 : 0)),
+    ground_speed: raw.ground_speed != null ? Number(raw.ground_speed) : (data.flight_context?.ground_speed ?? (engine_rpm > 100 ? 120 : 0)),
+    heading: raw.heading != null ? Number(raw.heading) : 0,
+    ambient_temperature: (raw.ambient_temperature ?? raw.ambient_temp) != null ? Number(raw.ambient_temperature ?? raw.ambient_temp) : 15,
+    ambient_pressure: raw.ambient_pressure != null ? Number(raw.ambient_pressure) : 1013.25
+  };
+}
+
 const standbyDiagnosis = {
-  status: 'NOT_SYNCHRONIZED',
-  fault_type: '—',
+  status: 'AWAITING_TELEMETRY',
+  fault_type: 'AWAITING TELEMETRY',
   severity: '—',
   confidence: null,
   anomaly_detected: false,
   anomaly_score: null,
   health_score: null,
   rul_estimate_hours: null,
-  fault_component: 'Waiting for Telemetry',
-  reasoning: ['Waiting for synchronized Virtual Engine telemetry.'],
-  recommended_action: 'Start Virtual Engine to commence live telemetry monitoring.'
+  fault_component: 'Awaiting Telemetry',
+  reasoning: ['Website 2 is in standby. Awaiting valid telemetry packet from Website 1 (Virtual Engine).'],
+  recommended_action: 'Start Virtual Engine to commence live telemetry transmission.'
+};
+
+const initialFlightContext = {
+  flight_phase: 'STANDBY',
+  throttle: null,
+  altitude: null,
+  true_airspeed: null,
+  ground_speed: null,
+  heading: null,
+  ambient_temperature: null,
+  ambient_pressure: null
 };
 
 export const useEngineStore = create((set, get) => {
@@ -344,9 +435,12 @@ export const useEngineStore = create((set, get) => {
   let reconnectAttempts = 0;
 
   return {
-    // Authoritative Connection State
-    // 'INITIALIZING' | 'CONNECTING' | 'SYNCHRONIZED' | 'STALE' | 'DISCONNECTED' | 'RECONNECTING' | 'OFFLINE' | 'ERROR'
-    syncState: 'INITIALIZING',
+    // ── Telemetry Readiness Gate (Requirement 3 & 4) ────────────────────────
+    // 'WAITING' | 'CONNECTING' | 'LIVE' | 'STALE' | 'LOST'
+    telemetryStatus: 'WAITING',
+    telemetryReady: false,
+    isSynchronized: false,
+    syncState: 'OFFLINE', // Compatibility: 'OFFLINE' | 'CONNECTING' | 'SYNCHRONIZED' | 'STALE' | 'DISCONNECTED'
     dataSource: 'virtual_engine', // 'virtual_engine' | 'demo_simulation'
     streamConnected: false,
     engineRunning: false,
@@ -354,37 +448,40 @@ export const useEngineStore = create((set, get) => {
     ingestionRateHz: 0.0,
     lastPacketTime: null,
     lastPacketTimeEpoch: 0,
+    lastPacketSequence: null,
+    lastPacketTimestamp: null,
     isStale: false,
 
-    // Historical Last Known Values (Displayed ONLY when disconnected / stale)
-    lastKnownTelemetry: null,
+    // ── Canonical Received Telemetry (Requirement 12) ───────────────────────
+    receivedTelemetry: null,
+    engineTelemetry: null, // References receivedTelemetry
+    telemetry: {}, // Backwards-compatible map
+    lastValidTelemetry: null, // Frozen snapshot when connection becomes STALE or LOST (Requirement 14)
     lastKnownTimestamp: null,
 
     // Telemetry Sync Host Configuration
     syncHostUrl: (typeof window !== 'undefined' && localStorage.getItem('aerotwin_sync_host_url'))
       || (typeof window !== 'undefined' ? `${window.location.origin}/api/telemetry` : '/api/telemetry'),
-    syncMode: 'strict', // 'strict' = Never generate fake physics in live mode
+    syncMode: 'strict',
     syncSource: 'standby', // 'website1_live' | 'demo_simulation' | 'standby'
     syncLatencyMs: null,
     syncLastSuccess: null,
 
-    // Telemetry Data (NULL initially - NO DUMMY NUMERICAL READINGS)
-    engineTelemetry: null,
-    flightContext: null,
-    telemetry: {}, // Backwards-compatible map
+    // Operating & Flight Context (Requirement 16)
+    flightContext: { ...initialFlightContext },
 
-    // Digital Twin Actual vs Expected
+    // Digital Twin Actual vs Expected (Requirement 10)
     physicsExpected: null,
     digitalTwinDeviations: null,
 
-    // 32-Sample Time-Series Window (Requirement 8)
+    // 32-Sample Time-Series Window (Requirement 7 & 8)
     telemetryWindow: [],
     windowSamples: 0,
     windowRequired: 32,
     modelReady: false,
 
-    // AI Intelligence (NULL initially - NO FAKE PREDICTIONS)
-    diagnosis: standbyDiagnosis,
+    // AI Intelligence (Frozen initially - Requirement 5 & 13)
+    diagnosis: { ...standbyDiagnosis },
     soh: { overall: null, oilScore: null, thermalScore: null, vibScore: null, rpmScore: null, fuelScore: null, anomalyScore: null, degradation: null },
     rulHours: null,
     rulMarginHours: null,
@@ -393,10 +490,10 @@ export const useEngineStore = create((set, get) => {
     maintenanceRecs: [],
     thresholds: { ...DEFAULT_THRESHOLDS },
 
-    // Mission Health
+    // Mission Health (Requirement 5)
     missionDemandHours: 0.22,
     missionStatus: 'STANDBY',
-    finalDecision: '—', // '—' before sync, 'GO' | 'CAUTION' | 'NO-GO' after
+    finalDecision: '—',
     criticalPersistenceSeconds: 0,
     emergencyRecoveryActive: false,
     emergencyState: 'STANDBY',
@@ -431,94 +528,59 @@ export const useEngineStore = create((set, get) => {
       }
     },
 
-    // ── Ingest Valid Packet from Virtual Engine ─────────────────────────────
+    // ── Ingest Valid Packet from Virtual Engine (Strict Telemetry Gate) ─────
     processTelemetryPacket: (data, isDemo = false) => {
-      // If Demo packet but we are in live Virtual Engine mode, discard!
       if (isDemo && get().dataSource !== 'demo_simulation') return;
       if (!isDemo && get().dataSource === 'demo_simulation') return;
 
-      const raw = data.engine_telemetry || data.telemetry || data;
-      if (!raw || typeof raw !== 'object') return;
+      let validated = null;
+      if (isDemo) {
+        validated = data;
+      } else {
+        validated = validateTelemetryPacket(data);
+        if (!validated) {
+          // Packet failed strict validation: do not mark live!
+          return;
+        }
+      }
 
-      // Extract raw telemetry fields WITHOUT fake default values
-      const rawRpm = raw.engine_rpm ?? raw.rpm;
-      const rawCht = raw.cht;
-      const rawEgt = raw.egt;
-      const rawOilP = raw.oil_pressure;
-      const rawVib = raw.vibration_rms ?? raw.vibration;
+      const prevSeq = get().lastPacketSequence;
+      const prevTs = get().lastPacketTimestamp;
+      const isNewSample = (validated.sequence != null && validated.sequence !== prevSeq)
+        || (validated.timestamp != null && validated.timestamp !== prevTs)
+        || isDemo;
 
-      // Packet validation: Must have at least one valid engine reading
-      const hasEngineData = rawRpm != null || rawCht != null || rawEgt != null || rawOilP != null || rawVib != null;
-      if (!hasEngineData) return;
+      // If duplicate polling frame, update link heartbeat but DO NOT advance time-series window
+      if (!isNewSample && get().telemetryReady) {
+        set({
+          telemetryStatus: 'LIVE',
+          syncState: 'SYNCHRONIZED',
+          isSynchronized: true,
+          isStale: false,
+          streamConnected: true,
+          lastPacketTimeEpoch: Date.now()
+        });
+        return;
+      }
 
-      const engine_rpm = rawRpm != null ? Number(Number(rawRpm).toFixed(0)) : null;
-      const cht = rawCht != null ? Number(Number(rawCht).toFixed(1)) : null;
-      const egt = rawEgt != null ? Number(Number(rawEgt).toFixed(0)) : null;
-      const oil_pressure = rawOilP != null
-        ? (rawOilP > 15.0 ? Number((rawOilP / 100.0).toFixed(2)) : Number(Number(rawOilP).toFixed(2)))
-        : null;
-      const oil_temp = (raw.oil_temp ?? raw.oil_temperature) != null
-        ? Number(Number(raw.oil_temp ?? raw.oil_temperature).toFixed(1))
-        : null;
-      const fuel_flow = raw.fuel_flow != null ? Number(Number(raw.fuel_flow).toFixed(1)) : null;
-      const fuel_pressure = raw.fuel_pressure != null ? Number(Number(raw.fuel_pressure).toFixed(2)) : null;
-      const map = raw.map != null ? Number(Number(raw.map).toFixed(1)) : null;
-      const vibration_rms = rawVib != null ? Number(Number(rawVib).toFixed(3)) : null;
-      const engine_load = (raw.engine_load ?? raw.engineLoad) != null
-        ? Number(Number(raw.engine_load ?? raw.engineLoad).toFixed(0))
-        : null;
-
-      const vibration_peak = raw.vibration_peak != null
-        ? Number(Number(raw.vibration_peak).toFixed(3))
-        : (vibration_rms != null ? Number((vibration_rms * 1.414).toFixed(3)) : null);
-      const crest_factor = raw.crest_factor != null ? Number(Number(raw.crest_factor).toFixed(2)) : 1.45;
-      const dominant_frequency_hz = raw.dominant_frequency_hz != null
-        ? Number(Number(raw.dominant_frequency_hz).toFixed(1))
-        : (engine_rpm != null && engine_rpm > 100 ? Number((engine_rpm / 60.0).toFixed(1)) : null);
-      const spectral_energy = raw.spectral_energy != null
-        ? Number(Number(raw.spectral_energy).toFixed(4))
-        : (vibration_rms != null ? Number((vibration_rms * vibration_rms).toFixed(4)) : null);
-
-      const isEngineOn = Boolean(raw.engine_on ?? (engine_rpm != null && engine_rpm > 100));
-
-      const engineTelemetry = {
-        engine_rpm,
-        cht,
-        egt,
-        oil_pressure,
-        oil_temp,
-        oil_temperature: oil_temp,
-        fuel_flow,
-        fuel_pressure,
-        map,
-        vibration_rms,
-        vibration: vibration_rms,
-        engine_load,
-        vibration_peak,
-        crest_factor,
-        dominant_frequency_hz,
-        spectral_energy,
-        engine_on: isEngineOn,
+      // Calculate physics expected & deviations from valid telemetry
+      const flightCtx = {
+        flight_phase: validated.flight_phase,
+        throttle: validated.throttle,
+        altitude: validated.altitude,
+        true_airspeed: validated.true_airspeed,
+        ground_speed: validated.ground_speed,
+        heading: validated.heading,
+        ambient_temperature: validated.ambient_temperature,
+        ambient_pressure: validated.ambient_pressure
       };
 
-      const flightContext = {
-        flight_phase: (raw.flight_phase || data.flight_context?.flight_phase || 'CRUISE').toUpperCase(),
-        throttle: raw.throttle != null ? Number(raw.throttle) : (data.flight_context?.throttle ?? 75),
-        altitude: raw.altitude != null ? Number(raw.altitude) : (data.flight_context?.altitude ?? 2500),
-        true_airspeed: raw.true_airspeed != null ? Number(raw.true_airspeed) : (data.flight_context?.true_airspeed ?? 120),
-        ground_speed: raw.ground_speed != null ? Number(raw.ground_speed) : (data.flight_context?.ground_speed ?? 120),
-        heading: raw.heading != null ? Number(raw.heading) : (data.flight_context?.heading ?? 0),
-        ambient_temperature: (raw.ambient_temperature ?? raw.ambient_temp) != null ? Number(raw.ambient_temperature ?? raw.ambient_temp) : 15,
-        ambient_pressure: raw.ambient_pressure != null ? Number(raw.ambient_pressure) : 1013.25,
-      };
+      const expected = computePhysicsExpected(validated, flightCtx);
+      const deviations = computeDigitalTwinDeviations(validated, expected);
 
-      // Calculate Digital Twin Expected State
-      const expected = computePhysicsExpected(engineTelemetry, flightContext);
-      const deviations = computeDigitalTwinDeviations(engineTelemetry, expected);
-
-      // Rolling 32-sample time-series buffer (Requirement 8)
+      // Advance 32-sample time-series buffer strictly on real new samples (Requirement 7)
       const prevWindow = get().telemetryWindow || [];
-      const newWindow = [...prevWindow, engineTelemetry].slice(-32);
+      const newWindow = [...prevWindow, validated].slice(-32);
       const windowSamples = newWindow.length;
       const modelReady = windowSamples >= 32;
 
@@ -530,14 +592,14 @@ export const useEngineStore = create((set, get) => {
       let maintRecs = get().maintenanceRecs;
 
       if (!modelReady) {
-        // Window incomplete: Do NOT run inference or display dummy outputs
+        // Window warming up: Freeze all AI outputs (Requirement 9)
         soh = { overall: null, oilScore: null, thermalScore: null, vibScore: null, rpmScore: null, fuelScore: null, anomalyScore: null, degradation: null };
         smoothedRul = null;
         rulMarginHours = null;
         finalDecision = '—';
         diagnosis = {
           status: 'COLLECTING_WINDOW',
-          fault_type: '—',
+          fault_type: 'AWAITING TELEMETRY',
           severity: '—',
           confidence: null,
           anomaly_detected: false,
@@ -548,14 +610,14 @@ export const useEngineStore = create((set, get) => {
           window_required: 32,
           window_ready: false,
           fault_component: 'Collecting Window',
-          reasoning: [`Collecting telemetry: ${windowSamples} / 32 samples before AI models activate.`],
-          recommended_action: 'Waiting for 32-step input window to stabilize.'
+          reasoning: [`Collecting real telemetry window: ${windowSamples} / 32 samples from Virtual Engine.`],
+          recommended_action: 'Awaiting 32 valid samples to commence AI diagnostics.'
         };
         maintRecs = [];
       } else {
-        // Window complete (>= 32 samples): Active AI inference
-        const incomingDiag = data.diagnosis || localDiagnose(engineTelemetry);
-        soh = computeSOH(engineTelemetry);
+        // Window complete (>= 32 samples): Active AI inference based on real evidence
+        const incomingDiag = (data.diagnosis && data.diagnosis.status !== 'Standby') ? data.diagnosis : localDiagnose(validated);
+        soh = computeSOH(validated);
 
         const prevRulVal = get().rulHours ?? 240.0;
         let targetRul = 240.0;
@@ -583,12 +645,13 @@ export const useEngineStore = create((set, get) => {
           finalDecision = '—';
         }
 
+        const isEngineOn = validated.engine_on;
         const diagStatus = isEngineOn
           ? (incomingDiag.status === 'Critical' ? 'Critical' : (incomingDiag.status === 'Warning' ? 'Warning' : 'Healthy'))
           : 'Standby';
         const diagFaultType = isEngineOn
           ? (incomingDiag.fault_type === 'Standby' || !incomingDiag.fault_type ? 'NORMAL' : incomingDiag.fault_type)
-          : 'STANDBY';
+          : 'AWAITING TELEMETRY';
 
         diagnosis = {
           status: diagStatus,
@@ -617,7 +680,7 @@ export const useEngineStore = create((set, get) => {
       }
 
       // Emergency Recovery Monitor (only if airborne & critical)
-      const isAirborne = ['TAKEOFF', 'CLIMB', 'CRUISE', 'DESCENT', 'APPROACH'].includes(flightContext.flight_phase);
+      const isAirborne = ['TAKEOFF', 'CLIMB', 'CRUISE', 'DESCENT', 'APPROACH'].includes(flightCtx.flight_phase);
       let critSecs = get().criticalPersistenceSeconds;
       let emActive = get().emergencyRecoveryActive;
       let emState = get().emergencyState;
@@ -638,21 +701,27 @@ export const useEngineStore = create((set, get) => {
       const nowEpoch = Date.now();
 
       set(s => ({
+        telemetryStatus: 'LIVE',
+        telemetryReady: true,
+        isSynchronized: true,
         syncState: 'SYNCHRONIZED',
         isStale: false,
         streamConnected: true,
-        engineRunning: isEngineOn,
+        engineRunning: validated.engine_on,
         packetsReceived: s.packetsReceived + 1,
         lastPacketTime: nowTimeStr,
         lastPacketTimeEpoch: nowEpoch,
-        lastKnownTelemetry: { ...engineTelemetry },
+        lastPacketSequence: validated.sequence,
+        lastPacketTimestamp: validated.timestamp,
+        receivedTelemetry: validated,
+        engineTelemetry: validated,
+        lastValidTelemetry: { ...validated },
         lastKnownTimestamp: nowTimeStr,
         telemetryWindow: newWindow,
         windowSamples,
         modelReady,
-        engineTelemetry,
-        flightContext,
-        telemetry: { ...engineTelemetry, ...flightContext, rpm: engineTelemetry.engine_rpm, vibration: engineTelemetry.vibration_rms },
+        flightContext: flightCtx,
+        telemetry: { ...validated, ...flightCtx, rpm: validated.engine_rpm, vibration: validated.vibration_rms },
         physicsExpected: expected,
         digitalTwinDeviations: deviations,
         diagnosis,
@@ -669,7 +738,7 @@ export const useEngineStore = create((set, get) => {
           ...s.history,
           {
             time: nowTimeStr,
-            ...engineTelemetry,
+            ...validated,
             health_score: soh.overall,
             anomaly_score: diagnosis.anomaly_score
           }
@@ -677,20 +746,25 @@ export const useEngineStore = create((set, get) => {
       }));
     },
 
-    // ── Connection Loss Handler (Requirement 11) ────────────────────────────
+    // ── Connection Loss Handler (Requirement 14) ────────────────────────────
     handleConnectionLoss: (reason = 'Connection Lost') => {
-      const lastKnown = get().engineTelemetry || get().lastKnownTelemetry;
+      const lastKnown = get().receivedTelemetry || get().engineTelemetry || get().lastValidTelemetry;
       const lastTimestamp = get().lastPacketTime || get().lastKnownTimestamp;
 
       set({
+        telemetryStatus: 'LOST',
+        telemetryReady: false,
+        isSynchronized: false,
         syncState: 'DISCONNECTED',
         streamConnected: false,
         engineRunning: false,
         isStale: false,
-        lastKnownTelemetry: lastKnown,
+        lastValidTelemetry: lastKnown,
         lastKnownTimestamp: lastTimestamp,
+        receivedTelemetry: null,
         engineTelemetry: null,
         telemetry: {},
+        flightContext: { ...initialFlightContext },
         physicsExpected: null,
         digitalTwinDeviations: null,
         telemetryWindow: [],
@@ -701,34 +775,38 @@ export const useEngineStore = create((set, get) => {
         rulMarginHours: null,
         finalDecision: '—',
         diagnosis: {
-          status: 'WAITING_FOR_TELEMETRY',
-          fault_type: '—',
+          status: 'TELEMETRY_LOST',
+          fault_type: 'AWAITING TELEMETRY',
           severity: '—',
           confidence: null,
           anomaly_detected: false,
           anomaly_score: null,
           health_score: null,
           rul_estimate_hours: null,
-          fault_component: 'Waiting for Telemetry',
-          reasoning: [`Virtual Engine disconnected (${reason}). Waiting for synchronized telemetry.`],
-          recommended_action: 'Start Virtual Engine to restore live telemetry.'
+          fault_component: 'Telemetry Lost',
+          reasoning: [`Virtual Engine connection lost (${reason}). Waiting for synchronized telemetry.`],
+          recommended_action: 'Resume Virtual Engine telemetry transmission.'
         },
         maintenanceRecs: []
       });
     },
 
-    // ── Staleness Monitor (Requirement 5) ───────────────────────────────────
+    // ── Staleness Monitor (Requirement 14) ───────────────────────────────────
     checkStaleness: () => {
-      const { syncState, lastPacketTimeEpoch, dataSource } = get();
+      const { telemetryStatus, lastPacketTimeEpoch, dataSource } = get();
       if (dataSource === 'demo_simulation') return;
 
-      if (syncState === 'SYNCHRONIZED' && lastPacketTimeEpoch > 0) {
+      if ((telemetryStatus === 'LIVE' || telemetryStatus === 'STALE') && lastPacketTimeEpoch > 0) {
         const elapsedSec = (Date.now() - lastPacketTimeEpoch) / 1000;
-        if (elapsedSec > 6.0 && elapsedSec <= 12.0) {
-          // Transition to STALE: live values become unavailable '—', timestamp marked STALE
+        if (elapsedSec > 5.0 && elapsedSec <= 12.0) {
+          const lastKnown = get().receivedTelemetry || get().engineTelemetry || get().lastValidTelemetry;
           set({
+            telemetryStatus: 'STALE',
             syncState: 'STALE',
+            isSynchronized: false,
             isStale: true,
+            lastValidTelemetry: lastKnown,
+            receivedTelemetry: null,
             engineTelemetry: null,
             telemetry: {},
             telemetryWindow: [],
@@ -738,8 +816,8 @@ export const useEngineStore = create((set, get) => {
             rulHours: null,
             finalDecision: '—',
             diagnosis: {
-              status: 'WAITING_FOR_TELEMETRY',
-              fault_type: '—',
+              status: 'TELEMETRY_STALE',
+              fault_type: 'AWAITING TELEMETRY',
               severity: '—',
               confidence: null,
               anomaly_detected: false,
@@ -747,8 +825,8 @@ export const useEngineStore = create((set, get) => {
               health_score: null,
               rul_estimate_hours: null,
               fault_component: 'Telemetry Stale',
-              reasoning: ['Telemetry stream became stale (>6s without packet).'],
-              recommended_action: 'Check Virtual Engine connection.'
+              reasoning: ['Telemetry stream became stale (>5s without packet from Website 1).'],
+              recommended_action: 'Check Virtual Engine telemetry stream.'
             }
           });
         } else if (elapsedSec > 12.0) {
@@ -757,20 +835,20 @@ export const useEngineStore = create((set, get) => {
       }
     },
 
-    // ── WebSocket Connection Manager (Requirement 17) ───────────────────────
+    // ── WebSocket Connection Manager (Strict Telemetry Gate) ────────────────
     connectWebSocket: () => {
       if (get().dataSource === 'demo_simulation') return;
 
       const url = getWsUrl();
       if (!url) {
-        if (get().syncState === 'INITIALIZING') {
+        if (get().telemetryStatus === 'WAITING') {
           set({ syncState: 'OFFLINE' });
         }
         return;
       }
 
       if (wsInstance && (wsInstance.readyState === WebSocket.OPEN || wsInstance.readyState === WebSocket.CONNECTING)) {
-        return; // Prevent duplicate connection instances
+        return;
       }
 
       if (wsReconnectTimer) {
@@ -778,7 +856,10 @@ export const useEngineStore = create((set, get) => {
         wsReconnectTimer = null;
       }
 
-      set({ syncState: reconnectAttempts > 0 ? 'RECONNECTING' : 'CONNECTING' });
+      set({
+        telemetryStatus: 'CONNECTING',
+        syncState: reconnectAttempts > 0 ? 'RECONNECTING' : 'CONNECTING'
+      });
 
       try {
         wsInstance = new WebSocket(url);
@@ -792,7 +873,7 @@ export const useEngineStore = create((set, get) => {
           try {
             const data = JSON.parse(e.data);
             if (data.type === 'heartbeat') {
-              if (!data.stream_active && get().syncState === 'SYNCHRONIZED') {
+              if (!data.stream_active && get().telemetryStatus === 'LIVE') {
                 get().checkStaleness();
               }
               return;
@@ -800,8 +881,8 @@ export const useEngineStore = create((set, get) => {
             if (data.type === 'connection_status') {
               if (data.telemetry) {
                 get().processTelemetryPacket(data);
-              } else if (get().syncState === 'CONNECTING') {
-                set({ syncState: 'OFFLINE' });
+              } else if (get().telemetryStatus === 'CONNECTING') {
+                set({ syncState: 'OFFLINE', telemetryStatus: 'WAITING' });
               }
               return;
             }
@@ -813,13 +894,12 @@ export const useEngineStore = create((set, get) => {
 
         wsInstance.onclose = () => {
           wsInstance = null;
-          if (get().syncState === 'SYNCHRONIZED') {
+          if (get().telemetryStatus === 'LIVE') {
             get().handleConnectionLoss('WebSocket connection closed');
           } else {
-            set({ streamConnected: false, syncState: 'DISCONNECTED' });
+            set({ streamConnected: false, syncState: 'DISCONNECTED', telemetryStatus: 'LOST' });
           }
 
-          // Exponential backoff reconnect
           reconnectAttempts++;
           const delay = Math.min(1000 * Math.pow(2, Math.min(reconnectAttempts, 4)), 10000);
           wsReconnectTimer = setTimeout(() => {
@@ -886,7 +966,7 @@ export const useEngineStore = create((set, get) => {
       }
     },
 
-    // ── Telemetry Polling & Auto-Sync Engine (ZERO DUMMY GENERATION) ─────────
+    // ── Telemetry Ingestion Engine (ZERO REMOTE FALLBACKS, STRICT TELEMETRY GATE) ─
     refreshStreamStatus: async () => {
       // Periodic staleness validation
       get().checkStaleness();
@@ -901,19 +981,14 @@ export const useEngineStore = create((set, get) => {
       }
 
       // If WebSocket is active and streaming live, avoid duplicate HTTP polling
-      if (wsInstance && wsInstance.readyState === WebSocket.OPEN && get().syncState === 'SYNCHRONIZED') {
+      if (wsInstance && wsInstance.readyState === WebSocket.OPEN && get().telemetryStatus === 'LIVE') {
         return;
       }
 
-      // Virtual Engine Mode: Poll authoritative endpoints
+      // Virtual Engine Mode: Poll authoritative local endpoint or user-configured sync host
       const configuredHost = get().syncHostUrl;
       const originHost = typeof window !== 'undefined' ? `${window.location.origin}/api/telemetry` : '/api/telemetry';
-      const endpointsToTry = [
-        originHost,
-        configuredHost,
-        'https://sihaimodel-beta.vercel.app/api/telemetry',
-        'https://sihaimodel.vercel.app/api/telemetry'
-      ].filter(Boolean);
+      const endpointsToTry = [originHost, configuredHost].filter(Boolean);
       const candidateHosts = [...new Set(endpointsToTry)];
 
       let liveData = null;
@@ -926,12 +1001,11 @@ export const useEngineStore = create((set, get) => {
           const lat = Math.round(performance.now() - t0);
           if (res.ok) {
             const json = await res.json();
-            const raw = json.engine_telemetry || json.telemetry || json;
-            const isFresh = json.seconds_since_last != null ? json.seconds_since_last < 8.0 : true;
-            const hasEngineData = raw && (raw.engine_rpm != null || raw.rpm != null || raw.cht != null || raw.egt != null);
+            const raw = json.engine_telemetry || json.telemetry;
+            const isFresh = json.seconds_since_last == null || json.seconds_since_last < 5.0;
 
-            if ((json.stream_active || isFresh) && hasEngineData) {
-              liveData = json;
+            if (json.stream_active && isFresh && raw) {
+              liveData = raw;
               latency = lat;
               break;
             }
@@ -940,7 +1014,7 @@ export const useEngineStore = create((set, get) => {
       }
 
       if (liveData) {
-        // Authoritative external stream from Virtual Engine is live!
+        // Real external telemetry from Website 1 received
         get().processTelemetryPacket(liveData, false);
         set({
           syncSource: 'website1_live',
@@ -948,10 +1022,13 @@ export const useEngineStore = create((set, get) => {
           syncLastSuccess: new Date().toLocaleTimeString('en-GB')
         });
       } else {
-        // External stream idle or in standby: ZERO DUMMY DATA GENERATION
-        if (get().syncState === 'INITIALIZING' || get().syncState === 'CONNECTING') {
+        // Stream inactive or in standby: ZERO dummy data generation
+        if (!get().telemetryReady && (get().telemetryStatus === 'WAITING' || get().telemetryStatus === 'CONNECTING')) {
           set({
+            telemetryStatus: 'WAITING',
             syncState: 'OFFLINE',
+            telemetryReady: false,
+            isSynchronized: false,
             streamConnected: false,
             engineRunning: false,
             syncSource: 'standby',

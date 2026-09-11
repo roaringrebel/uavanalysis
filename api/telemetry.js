@@ -1,12 +1,13 @@
 // Vercel Serverless Function: /api/telemetry
-// Receives live telemetry from virtualengine.vercel.app and serves it to sihaimodel.vercel.app
+// Receives live telemetry from Website 1 (Virtual Engine) and serves it to Website 2 (AeroTwin)
+// Strict Zero-Dummy: NEVER proxies stale remote hosts or returns fake defaults.
 
 let latestTelemetry = null;
 let packetCount = 0;
 let lastPacketTime = null;
 
 export default async function handler(req, res) {
-  // Set CORS headers so virtualengine.vercel.app can POST without any CORS issues
+  // CORS headers allowing Website 1 to dispatch telemetry
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
@@ -24,29 +25,23 @@ export default async function handler(req, res) {
     return;
   }
 
+  // POST: Receive real telemetry packet from Website 1
   if (req.method === 'POST') {
     try {
       const data = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {});
-      
+
       latestTelemetry = {
-        ...latestTelemetry,
         ...data,
         timestamp: data.timestamp || new Date().toISOString()
       };
       packetCount++;
       lastPacketTime = new Date().toISOString();
 
-      // Simple real-time rule health evaluation for Vercel edge
-      const rpm = latestTelemetry.rpm || 4800;
-      const cht = latestTelemetry.cht || 110;
-      const isAnomaly = cht > 135 || rpm > 5600;
-
       return res.status(200).json({
         status: "ok",
         received: true,
         packets_received: packetCount,
-        anomaly_detected: isAnomaly,
-        message: "Telemetry ingested successfully into AeroTwin",
+        message: "Telemetry packet ingested successfully from Website 1",
         timestamp: lastPacketTime
       });
     } catch (err) {
@@ -54,17 +49,18 @@ export default async function handler(req, res) {
     }
   }
 
+  // RESET / DELETE
   if (req.method === 'DELETE' || (req.method === 'POST' && req.body && req.body.action === 'reset')) {
     latestTelemetry = null;
     packetCount = 0;
     lastPacketTime = null;
-    return res.status(200).json({ status: "reset", stream_active: false });
+    return res.status(200).json({ status: "reset", stream_active: false, telemetry: null });
   }
 
-  // GET: Return latest telemetry frame and stream status
+  // GET: Return latest telemetry frame only if actively streaming (< 5.0 seconds old)
   if (req.method === 'GET') {
     const timeSinceLastMs = lastPacketTime ? (Date.now() - new Date(lastPacketTime).getTime()) : 999999;
-    const isLive = Boolean(lastPacketTime && timeSinceLastMs < 5500);
+    const isLive = Boolean(lastPacketTime && timeSinceLastMs < 5000);
 
     if (isLive && latestTelemetry) {
       return res.status(200).json({
@@ -77,29 +73,15 @@ export default async function handler(req, res) {
       });
     }
 
-    // Seamlessly proxy active stream from authoritative endpoint https://sihaimodel.vercel.app/api/telemetry
-    try {
-      const upstream = await fetch('https://sihaimodel.vercel.app/api/telemetry', {
-        headers: { 'Accept': 'application/json' },
-        cache: 'no-store'
-      });
-      if (upstream.ok) {
-        const upstreamData = await upstream.json();
-        if (upstreamData && (upstreamData.stream_active || upstreamData.telemetry)) {
-          return res.status(200).json(upstreamData);
-        }
-      }
-    } catch (e) {
-      // quiet fallback
-    }
-
+    // Link is inactive / in standby: ZERO fake or cached telemetry is served as live
     return res.status(200).json({
       status: "standby",
       stream_active: false,
-      packets_received: 0,
-      seconds_since_last: null,
-      last_packet_time: null,
-      telemetry: null
+      packets_received: packetCount,
+      seconds_since_last: lastPacketTime ? Math.round(timeSinceLastMs / 100) / 10 : null,
+      last_packet_time: lastPacketTime,
+      telemetry: null,
+      last_valid_telemetry: latestTelemetry
     });
   }
 

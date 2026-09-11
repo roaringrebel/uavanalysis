@@ -36,7 +36,7 @@ const FaultSimulation = () => {
   const isReady = isSynchronized && modelReady;
   const isCollecting = isSynchronized && !modelReady;
 
-  const faultName = isReady ? (diagnosis?.fault_type || 'NORMAL') : (isCollecting ? `COLLECTING (${windowSamples}/${windowRequired})` : '—');
+  const faultName = isReady ? (diagnosis?.fault_type || 'NORMAL') : (isCollecting ? `COLLECTING (${windowSamples}/${windowRequired})` : 'AWAITING TELEMETRY');
   const severity = isReady ? (diagnosis?.severity || 'LOW') : '—';
   const confidence = isReady && diagnosis?.confidence != null ? Math.round(diagnosis.confidence * 100) : null;
   const anomalyScore = isReady && soh?.anomalyScore != null ? soh.anomalyScore : null;

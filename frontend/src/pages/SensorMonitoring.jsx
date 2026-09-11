@@ -175,7 +175,7 @@ const SensorMonitoring = () => {
           <div className="flex-1 overflow-y-auto p-4">
             <p className="text-[9px] font-black tracking-widest mb-3 text-orange-500">LIVE SENSOR DATA</p>
             <div className="space-y-2">
-              {SENSORS_ON_ENGINE.map(sensor => {
+              {SENSORS_ON_ENGINE.map((sensor, sIdx) => {
                 const val  = getSensorValue(sensor.id);
                 const unit = getSensorUnit(sensor.id);
                 return (
@@ -183,7 +183,7 @@ const SensorMonitoring = () => {
                     key={sensor.id}
                     className="flex items-center justify-between py-2 px-3 rounded-lg bg-gray-50 border border-gray-100"
                     animate={engineRunning ? { borderColor: [`${sensor.color}20`, `${sensor.color}50`, `${sensor.color}20`] } : {}}
-                    transition={{ duration: 2, delay: Math.random() * 1.5, repeat: Infinity }}
+                    transition={{ duration: 2, delay: (sIdx * 0.15) % 1.5, repeat: Infinity }}
                   >
                     <div className="flex items-center gap-2">
                       <span className="w-2 h-2 rounded-full shrink-0" style={{ background: sensor.color, boxShadow: engineRunning ? `0 0 4px ${sensor.color}` : 'none' }} />

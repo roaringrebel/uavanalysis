@@ -7,6 +7,7 @@ import {
 import { useEngineStore, SENSOR_CONFIG_10, formatSensorValue } from '../store/useEngineStore';
 
 const DigitalTwinPage = () => {
+  const telemetryReady = useEngineStore((s) => s.telemetryReady);
   const streamConnected = useEngineStore((s) => s.streamConnected);
   const engineTelemetry = useEngineStore((s) => s.engineTelemetry);
   const flightContext = useEngineStore((s) => s.flightContext);
@@ -14,7 +15,7 @@ const DigitalTwinPage = () => {
   const digitalTwinDeviations = useEngineStore((s) => s.digitalTwinDeviations);
   const diagnosis = useEngineStore((s) => s.diagnosis);
 
-  const hasStream = streamConnected && engineTelemetry !== null;
+  const hasStream = telemetryReady && engineTelemetry !== null;
 
   return (
     <div className="flex-1 flex flex-col h-full bg-[#F8FAFC] text-gray-800 select-none overflow-y-auto p-4 lg:p-7 max-w-[1780px] mx-auto w-full gap-6 font-sans">
@@ -40,13 +41,13 @@ const DigitalTwinPage = () => {
         {/* Operating Context Bar */}
         <div className="flex flex-wrap items-center gap-3 text-xs">
           <div className="px-3 py-1.5 rounded-xl bg-slate-100 border border-slate-200 font-bold text-slate-700">
-            FLIGHT PHASE: <span className="text-orange-600 font-black">{flightContext?.flight_phase || 'STANDBY'}</span>
+            FLIGHT PHASE: <span className="text-orange-600 font-black">{telemetryReady ? (flightContext?.flight_phase || 'STANDBY') : 'STANDBY'}</span>
           </div>
           <div className="px-3 py-1.5 rounded-xl bg-slate-100 border border-slate-200 font-bold text-slate-700">
-            THROTTLE: <span className="text-gray-900 font-black">{flightContext?.throttle ?? 75}%</span>
+            THROTTLE: <span className="text-gray-900 font-black">{telemetryReady && flightContext?.throttle != null ? `${flightContext.throttle}%` : '—'}</span>
           </div>
           <div className="px-3 py-1.5 rounded-xl bg-slate-100 border border-slate-200 font-bold text-slate-700">
-            ALTITUDE: <span className="text-gray-900 font-black">{flightContext?.altitude ?? 2500} m</span>
+            ALTITUDE: <span className="text-gray-900 font-black">{telemetryReady && flightContext?.altitude != null ? `${flightContext.altitude} m` : '—'}</span>
           </div>
         </div>
       </div>
@@ -102,12 +103,12 @@ const DigitalTwinPage = () => {
             </thead>
             <tbody className="divide-y divide-gray-100 text-xs">
               {SENSOR_CONFIG_10.map((s, idx) => {
-                const actual = engineTelemetry ? engineTelemetry[s.id] : null;
-                const expected = physicsExpected ? physicsExpected[s.id] : null;
-                const dev = digitalTwinDeviations ? digitalTwinDeviations[s.id] : null;
+                const actual = (telemetryReady && engineTelemetry) ? engineTelemetry[s.id] : null;
+                const expected = (telemetryReady && physicsExpected) ? physicsExpected[s.id] : null;
+                const dev = (telemetryReady && digitalTwinDeviations) ? digitalTwinDeviations[s.id] : null;
 
                 const delta = dev?.delta ?? (actual != null && expected != null ? Number((actual - expected).toFixed(s.decimals)) : null);
-                const status = dev?.status || 'NORMAL';
+                const status = telemetryReady ? (dev?.status || 'NORMAL') : 'AWAITING TELEMETRY';
 
                 return (
                   <tr
@@ -124,10 +125,18 @@ const DigitalTwinPage = () => {
                       <span className="text-[10px] text-gray-400 font-mono">Unit: {s.unit}</span>
                     </td>
                     <td className="py-3.5 px-6 text-right font-mono font-bold text-sm text-gray-900">
-                      {formatSensorValue(actual, s.decimals)} <span className="text-xs text-gray-400 font-normal">{s.unit}</span>
+                      {actual != null ? (
+                        <>
+                          {formatSensorValue(actual, s.decimals)} <span className="text-xs text-gray-400 font-normal">{s.unit}</span>
+                        </>
+                      ) : '--'}
                     </td>
                     <td className="py-3.5 px-6 text-right font-mono text-gray-600 font-bold">
-                      {formatSensorValue(expected, s.decimals)} <span className="text-xs text-gray-400 font-normal">{s.unit}</span>
+                      {expected != null ? (
+                        <>
+                          {formatSensorValue(expected, s.decimals)} <span className="text-xs text-gray-400 font-normal">{s.unit}</span>
+                        </>
+                      ) : '--'}
                     </td>
                     <td className="py-3.5 px-6 text-right font-mono font-bold">
                       {delta !== null ? (
@@ -142,9 +151,11 @@ const DigitalTwinPage = () => {
                     <td className="py-3.5 px-6 text-center">
                       <span
                         className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
-                          status === 'CRITICAL'
-                            ? 'bg-red-100 text-red-700 border border-red-200'
-                            : (status === 'WARNING' ? 'bg-amber-100 text-amber-700 border border-amber-200' : 'bg-emerald-100 text-emerald-700 border border-emerald-200')
+                          !telemetryReady
+                            ? 'bg-slate-100 text-slate-500 border border-slate-200'
+                            : (status === 'CRITICAL'
+                              ? 'bg-red-100 text-red-700 border border-red-200'
+                              : (status === 'WARNING' ? 'bg-amber-100 text-amber-700 border border-amber-200' : 'bg-emerald-100 text-emerald-700 border border-emerald-200'))
                         }`}
                       >
                         {status === 'CRITICAL' && <AlertOctagon size={11} />}
